@@ -50,6 +50,7 @@ comparison of nhmmer vs cmsearch: speed, memory, sensitivity, and when to use ea
 | 3 | tRNA annotation | ARAGORN | `mod03_tRNA_{prefix}.gff3` |
 | 4 | Integration | — | `mod04_annotation_{prefix}.gff3`, `mod04_summary_{prefix}.tsv` |
 | 5 | Visualization | matplotlib | `mod05_plot_{prefix}.{pdf\|png\|svg}` |
+| 6 | Evolutionary analysis | cmsearch RF00005 + custom Python | `mod06_rrna_scores_{prefix}.tsv`, `mod06_trna_class_{prefix}.tsv`, `mod06_arrays_{prefix}.tsv`, `mod06_evolution_{prefix}.{pdf\|png\|svg}` |
 
 ### Rfam models used
 
@@ -151,7 +152,7 @@ comparison of the two tools.
 | Flag | Default | Description |
 |---|---|---|
 | `--threads` | 4 | CPU threads for the rRNA search tool |
-| `--skip_module` | — | Comma-separated module numbers to skip: `0`=telomere `1`=masking `2`=rRNA `3`=tRNA `4`=integration `5`=visualization (e.g. `--skip_module 0,1,2`) |
+| `--skip_module` | — | Comma-separated module numbers to skip: `0`=telomere `1`=masking `2`=rRNA `3`=tRNA `4`=integration `5`=visualization `6`=evolution (e.g. `--skip_module 0,1,2`) |
 | `--format` | `pdf` | Plot format(s): `pdf`, `png`, `svg` — comma-separated |
 | `--top_sequences` | `50` | Number of sequences shown in the ideogram |
 | `--sort_sequences` | `length` | Ideogram sequence order: `length` (longest first) or `seqid` (natural Chr1/Chr2/… sort) |
@@ -173,6 +174,10 @@ comparison of the two tools.
 │   ├── mod04_annotation_{prefix}.gff3      Combined GFF3 (Module 4)
 │   ├── mod04_summary_{prefix}.tsv          Detailed feature summary (count, length, % genome)
 │   ├── mod05_plot_{prefix}.pdf             Visualization figure (Module 5; format set by --format)
+│   ├── mod06_rrna_scores_{prefix}.tsv      Per-copy rRNA bit scores (Module 6a)
+│   ├── mod06_trna_class_{prefix}.tsv       tRNA functional/pseudogene classification (Module 6b)
+│   ├── mod06_arrays_{prefix}.tsv           Tandem array table with spacing stats (Module 6c)
+│   ├── mod06_evolution_{prefix}.pdf        Evolutionary analysis figure (Module 6d)
 │   └── {prefix}.run_summary.json           Run metadata and resource usage
 ├── workdir/
 │   ├── masked_soft.fasta                   Soft-masked FASTA (tantan lowercase)
@@ -298,6 +303,93 @@ of copies) is painted first, tRNA on top of that, and telomeres last.
 Telomere bars are drawn 50% taller than the sequence bar so they stand out
 visually even when the rRNA density is high.  The legend in the lower-right
 corner of the ideogram includes the count for each feature type.
+
+---
+
+## Evolutionary analysis (Module 6)
+
+Module 6 interrogates the existing GFF3 outputs from Modules 2 and 3 to
+characterise sequence divergence, pseudogene content, and tandem array
+organisation.  It requires no new external annotation tools beyond
+Infernal (already a dependency) and runs in minutes on the outputs of a
+completed pipeline.
+
+### 6a — rRNA bit score distribution
+
+Each rRNA copy in `mod02_rRNA_{prefix}.gff3` already carries the bit score
+assigned by nhmmer or cmsearch.  Module 6a aggregates these into
+`mod06_rrna_scores_{prefix}.tsv` and plots per-subtype histograms.  The
+bit-score distribution reveals the proportion of high-confidence
+(functional) vs. low-scoring (degenerate / pseudogenic) copies for each
+rRNA class.
+
+### 6b — tRNA pseudogene classification
+
+ARAGORN detects tRNA structural patterns but does not formally classify
+pseudogenes.  Module 6b:
+
+1. Extracts each tRNA sequence from the genome FASTA using the GFF3
+   coordinates (streaming; peak memory = one chromosome).
+2. Scores every copy with **cmsearch RF00005** (the universal Rfam tRNA
+   covariance model), which captures RNA secondary structure quality.
+3. Classifies each copy as **functional** or **pseudogene candidate**
+   using three independent criteria (any one is sufficient):
+   - CM bit score < 20 bits (tRNAscan-SE's own structural score threshold)
+   - Unrecognised anticodon (`???` in ARAGORN output)
+   - Length outside 50–150 bp
+
+Results are written to `mod06_trna_class_{prefix}.tsv` with per-copy
+scores and reasons.
+
+### 6c — Tandem array detection
+
+Consecutive features within a distance threshold are clustered into
+arrays:
+
+| Feature class | Max inter-copy gap | Min copies |
+|---|---|---|
+| rRNA | 50 kb | 2 |
+| tRNA | 10 kb | 2 |
+
+Each array is summarised in `mod06_arrays_{prefix}.tsv`:
+
+```
+feature_class  array_id  seqname  array_start  array_end  n_copies
+array_length_bp  mean_spacing_bp  min_spacing_bp  max_spacing_bp
+complete_rDNA_units  subtype_counts
+```
+
+`complete_rDNA_units` — estimated number of complete rDNA repeat units in
+the array, computed as `min(n_SSU, n_5.8S, n_LSU)` for eukaryotes or
+`min(n_SSU, n_LSU)` for bacteria/archaea.  The inter-copy spacing
+distribution (median spacing ≈ IGS + gene length) gives an estimate of
+the rDNA repeat unit size.
+
+### 6d — Evolution figure
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  rRNA bit score histograms (one panel per subtype)       │
+│  vertical dashed line = median; n = copy count           │
+├────────────────────────────┬───────────────┬─────────────┤
+│  tRNA CM score             │  rRNA inter-  │  Array size │
+│  functional vs pseudogene  │  copy spacing │  distribution│
+└────────────────────────────┴───────────────┴─────────────┘
+```
+
+### Running Module 6 on an existing annotation
+
+```bash
+python3 scripts/UbboTELORNA.py \
+    --fasta       genome.fasta \
+    --output      annotation_run/ \
+    --skip_module 0,1,2,3,4,5 \
+    --format      png,pdf \
+    --threads     8
+```
+
+Modules 0–5 are skipped; their existing GFF3 outputs are picked up
+automatically.  Only Module 6 runs.
 
 ---
 

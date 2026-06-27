@@ -1218,6 +1218,502 @@ def run_module5_plot(fasta: Path,
     plt.close(fig)
 
 
+# ── Module 6: Evolutionary analysis ──────────────────────────────────────────
+
+_RFAM_TRNA_ACC  = "RF00005"   # universal tRNA covariance model
+_TRNA_CM_SCORE_THRESHOLD = 20.0   # bits — tRNAscan-SE's own pseudogene threshold
+_TRNA_LEN_MIN   = 50          # bp
+_TRNA_LEN_MAX   = 150         # bp
+_RRNA_ARRAY_GAP = 50_000      # bp — max gap between consecutive rRNA hits in one array
+_TRNA_ARRAY_GAP = 10_000      # bp — max gap between consecutive tRNA hits in one array
+
+_COMP = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+
+
+def _rev_comp(seq: str) -> str:
+    return seq.translate(_COMP)[::-1]
+
+
+def _parse_gff3_records(gff: Path | None) -> list:
+    """Parse a GFF3 into full feature dicts (score, subtype, length …)."""
+    records = []
+    if gff is None or not gff.exists():
+        return records
+    with open(gff) as fh:
+        for line in fh:
+            if line.startswith("#") or not line.strip():
+                continue
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 9:
+                continue
+            try:
+                start = int(cols[3])
+                end   = int(cols[4])
+            except ValueError:
+                continue
+            attrs    = cols[8]
+            id_m     = re.search(r'ID=([^;]+)',      attrs)
+            name_m   = re.search(r'Name=([^;]+)',    attrs)
+            score_m  = re.search(r'score=([^;]+)',   attrs)
+            evalue_m = re.search(r'E-value=([^;]+)', attrs)
+            records.append({
+                "seqname":  cols[0],
+                "start":    start,
+                "end":      end,
+                "strand":   cols[6],
+                "feat_id":  id_m.group(1)   if id_m    else f"{cols[0]}:{start}-{end}",
+                "subtype":  name_m.group(1) if name_m  else "",
+                "score":    float(score_m.group(1))  if score_m  else None,
+                "evalue":   float(evalue_m.group(1)) if evalue_m else None,
+                "length":   end - start + 1,
+                "attrs":    attrs.rstrip(),
+            })
+    return records
+
+
+def _extract_sequences(genome: Path, records: list) -> dict:
+    """Stream genome FASTA and extract feature sequences. Peak memory = one chromosome."""
+    by_seq: dict = {}
+    for r in records:
+        by_seq.setdefault(r["seqname"], []).append(r)
+
+    result: dict = {}
+    current_name: str | None  = None
+    current_parts: list | None = None
+
+    def _flush(name, parts):
+        if name not in by_seq or parts is None:
+            return
+        seq = "".join(parts)
+        for r in by_seq[name]:
+            sub = seq[r["start"] - 1 : r["end"]]
+            if r.get("strand") == "-":
+                sub = _rev_comp(sub)
+            result[r["feat_id"]] = sub
+
+    with open(genome) as fh:
+        for line in fh:
+            line = line.rstrip()
+            if line.startswith(">"):
+                _flush(current_name, current_parts)
+                current_name  = line[1:].split()[0]
+                current_parts = [] if current_name in by_seq else None
+            elif current_parts is not None:
+                current_parts.append(line)
+    _flush(current_name, current_parts)
+    return result
+
+
+# ── Array detection ───────────────────────────────────────────────────────────
+
+def _summarise_array(arr_id: int, seqname: str, cluster: list) -> dict:
+    cluster  = sorted(cluster, key=lambda x: x["start"])
+    starts   = [f["start"] for f in cluster]
+    ends     = [f["end"]   for f in cluster]
+    spacings = [cluster[i]["start"] - cluster[i - 1]["end"]
+                for i in range(1, len(cluster))]
+    subtypes = Counter(f["subtype"] for f in cluster)
+
+    ssu = (subtypes.get("SSU_rRNA_eukarya", 0) +
+           subtypes.get("SSU_rRNA_bacteria", 0) +
+           subtypes.get("SSU_rRNA_archaea",  0))
+    lsu = (subtypes.get("LSU_rRNA_eukarya", 0) +
+           subtypes.get("LSU_rRNA_bacteria", 0) +
+           subtypes.get("LSU_rRNA_archaea",  0))
+    s58 = subtypes.get("5_8S_rRNA", 0)
+    complete_units = min(ssu, s58, lsu) if (ssu and s58 and lsu) else min(ssu, lsu)
+
+    return {
+        "array_id":          arr_id,
+        "seqname":           seqname,
+        "array_start":       min(starts),
+        "array_end":         max(ends),
+        "n_copies":          len(cluster),
+        "array_length_bp":   max(ends) - min(starts) + 1,
+        "subtypes":          dict(subtypes),
+        "spacings":          spacings,
+        "mean_spacing_bp":   round(sum(spacings) / len(spacings)) if spacings else 0,
+        "min_spacing_bp":    min(spacings, default=0),
+        "max_spacing_bp":    max(spacings, default=0),
+        "complete_rDNA_units": complete_units,
+    }
+
+
+def _detect_arrays(records: list, max_gap: int, min_copies: int = 2) -> list:
+    """Cluster GFF3 feature records into tandem arrays by proximity."""
+    by_seq: dict = {}
+    for r in records:
+        by_seq.setdefault(r["seqname"], []).append(r)
+
+    arrays = []
+    arr_id = 0
+    for seqname in sorted(by_seq.keys(), key=_natural_key):
+        feats = sorted(by_seq[seqname], key=lambda x: x["start"])
+        cluster = [feats[0]]
+        for f in feats[1:]:
+            if f["start"] - cluster[-1]["end"] <= max_gap:
+                cluster.append(f)
+            else:
+                if len(cluster) >= min_copies:
+                    arrays.append(_summarise_array(arr_id, seqname, cluster))
+                    arr_id += 1
+                cluster = [f]
+        if len(cluster) >= min_copies:
+            arrays.append(_summarise_array(arr_id, seqname, cluster))
+            arr_id += 1
+    return arrays
+
+
+# ── tRNA pseudogene classification ────────────────────────────────────────────
+
+def _ensure_trna_cm(rfam_dir: Path) -> Path:
+    """Download or locate the universal tRNA covariance model (RF00005)."""
+    cm_path = rfam_dir / f"{_RFAM_TRNA_ACC}.cm"
+    if cm_path.exists() and cm_path.stat().st_size > 0:
+        _log(f"  tRNA CM found: {cm_path}")
+        return cm_path
+    url = _RFAM_CM_URL.format(acc=_RFAM_TRNA_ACC)
+    _log(f"  Downloading {_RFAM_TRNA_ACC} (tRNA CM) …")
+    try:
+        urlretrieve(url, cm_path)
+    except Exception as e:
+        print(f"ERROR: failed to download {_RFAM_TRNA_ACC}: {e}", file=sys.stderr)
+        sys.exit(1)
+    return cm_path
+
+
+def _score_trnas_cmsearch(trna_seqs: dict, cm_path: Path,
+                           workdir: Path, threads: int, force: bool) -> dict:
+    """Run cmsearch RF00005 against extracted tRNA sequences.
+    Returns {feat_id: best_bit_score}."""
+    cmsearch  = _require_tool("cmsearch")
+    trna_fa   = workdir / "mod06_trna_seqs.fasta"
+    tblout    = workdir / "mod06_trna_cmsearch.tblout"
+
+    with open(trna_fa, "w") as fh:
+        for feat_id, seq in trna_seqs.items():
+            if seq:
+                fh.write(f">{feat_id}\n{seq}\n")
+
+    if not _checkpoint(tblout, "tRNA cmsearch RF00005", force):
+        _run([cmsearch, "--cpu", str(threads),
+              "--tblout", str(tblout), "--noali",
+              "-E", "1000",          # lenient — tRNA seqs are short
+              "--incE", "1000",
+              str(cm_path), str(trna_fa)],
+             capture_stdout=True)
+
+    scores: dict = {}
+    with open(tblout) as fh:
+        for line in fh:
+            if line.startswith("#") or not line.strip():
+                continue
+            cols = line.split()
+            if len(cols) < 16:
+                continue
+            try:
+                score = float(cols[14])
+            except ValueError:
+                continue
+            feat_id = cols[0]
+            if feat_id not in scores or score > scores[feat_id]:
+                scores[feat_id] = score
+    return scores
+
+
+def _classify_trnas(records: list, cm_scores: dict) -> list:
+    """Classify tRNA records as functional or pseudogene candidate."""
+    result = []
+    for r in records:
+        cm_score = cm_scores.get(r["feat_id"])
+        ac_m     = re.search(r'\(([^)]+)\)', r["subtype"])
+        anticodon = ac_m.group(1) if ac_m else "???"
+
+        reasons = []
+        if cm_score is None:
+            reasons.append("no CM hit")
+        elif cm_score < _TRNA_CM_SCORE_THRESHOLD:
+            reasons.append(f"CM score {cm_score:.1f} < {_TRNA_CM_SCORE_THRESHOLD}")
+        if "???" in anticodon:
+            reasons.append("unrecognised anticodon")
+        if r["length"] < _TRNA_LEN_MIN or r["length"] > _TRNA_LEN_MAX:
+            reasons.append(f"length {r['length']} bp out of [50,150]")
+
+        result.append({
+            **r,
+            "cm_score":  cm_score,
+            "anticodon": anticodon,
+            "category":  "pseudogene" if reasons else "functional",
+            "reason":    "; ".join(reasons),
+        })
+    return result
+
+
+# ── Module 6 plots ────────────────────────────────────────────────────────────
+
+def _plot_evolution(rrna_records: list, trna_classified: list,
+                    rrna_arrays: list, trna_arrays: list,
+                    out_base: Path, plot_formats: list, prefix: str) -> None:
+    """Two-row figure: rRNA score distributions / tRNA pseudogenes + array stats."""
+
+    # Collect rRNA scores per subtype (biological order)
+    rrna_by_sub: dict = {}
+    for r in rrna_records:
+        if r["score"] is not None:
+            rrna_by_sub.setdefault(r["subtype"], []).append(r["score"])
+    sub_present = [s for s in _RRNA_ORDER if s in rrna_by_sub]
+    for s in rrna_by_sub:
+        if s not in sub_present:
+            sub_present.append(s)
+    n_sub = max(len(sub_present), 3)
+
+    fig = plt.figure(figsize=(max(18, n_sub * 4.2), 11))
+    gs  = GridSpec(2, n_sub, figure=fig, hspace=0.50, wspace=0.38)
+
+    # ── Row 1: rRNA bit score histogram per subtype ────────────────────────────
+    for i, subtype in enumerate(sub_present):
+        ax = fig.add_subplot(gs[0, i])
+        scores = rrna_by_sub[subtype]
+        ax.hist(scores, bins=50, color=_C_RRNA, edgecolor="white", linewidth=0.3)
+        short = subtype.replace("_rRNA", "").replace("_", " ")
+        ax.set_title(short, fontsize=9)
+        ax.set_xlabel("Bit score", fontsize=8)
+        if i == 0:
+            ax.set_ylabel("Count", fontsize=8)
+        ax.spines[["top", "right"]].set_visible(False)
+        med = sorted(scores)[len(scores) // 2]
+        ax.axvline(med, color="black", linestyle="--", linewidth=1, alpha=0.6)
+        ymax = ax.get_ylim()[1]
+        ax.text(med * 1.01, ymax * 0.92,
+                f"med\n{med:.0f}", fontsize=7, va="top", color="black", alpha=0.8)
+        ax.annotate(f"n={len(scores):,}", xy=(0.97, 0.97),
+                    xycoords="axes fraction", ha="right", va="top", fontsize=8)
+
+    # ── Row 2a: tRNA CM score — functional vs pseudogene ──────────────────────
+    ax_tc = fig.add_subplot(gs[1, 0:max(1, n_sub // 2)])
+    if trna_classified:
+        func_sc  = [t["cm_score"] for t in trna_classified
+                    if t["category"] == "functional" and t["cm_score"] is not None]
+        pseudo_sc = [t["cm_score"] for t in trna_classified
+                     if t["category"] == "pseudogene" and t["cm_score"] is not None]
+        all_sc = func_sc + pseudo_sc
+        hi = max(all_sc) if all_sc else 100
+        bins = [x * 5 for x in range(int(hi // 5) + 3)]
+        if func_sc:
+            ax_tc.hist(func_sc, bins=bins, color=_C_RRNA, alpha=0.75,
+                       label=f"Functional  n={len(func_sc):,}")
+        if pseudo_sc:
+            ax_tc.hist(pseudo_sc, bins=bins, color=_C_TRNA, alpha=0.75,
+                       label=f"Pseudogene candidate  n={len(pseudo_sc):,}")
+        ax_tc.axvline(_TRNA_CM_SCORE_THRESHOLD, color="black",
+                      linestyle="--", linewidth=1, alpha=0.7)
+        ax_tc.text(_TRNA_CM_SCORE_THRESHOLD + 0.5, ax_tc.get_ylim()[1] * 0.92,
+                   f"{_TRNA_CM_SCORE_THRESHOLD:.0f} bit\nthreshold",
+                   fontsize=7, va="top")
+        ax_tc.legend(fontsize=8, frameon=False)
+    else:
+        ax_tc.text(0.5, 0.5, "No tRNA data", ha="center", va="center",
+                   transform=ax_tc.transAxes, color=_C_OTHER)
+    ax_tc.set_title("tRNA structural score (cmsearch RF00005)\nfunctional vs pseudogene candidates",
+                    fontsize=9)
+    ax_tc.set_xlabel("Bit score", fontsize=8)
+    ax_tc.set_ylabel("Count", fontsize=8)
+    ax_tc.spines[["top", "right"]].set_visible(False)
+
+    # ── Row 2b: rRNA inter-copy spacing distribution ───────────────────────────
+    ax_sp = fig.add_subplot(gs[1, max(1, n_sub // 2) : max(2, n_sub * 3 // 4)])
+    all_spacings = []
+    for a in rrna_arrays:
+        all_spacings.extend(a["spacings"])
+    if all_spacings:
+        sp_kb = [s / 1_000 for s in all_spacings if s >= 0]
+        ax_sp.hist(sp_kb, bins=40, color=_C_RRNA, edgecolor="white", linewidth=0.3)
+        med_sp = sorted(sp_kb)[len(sp_kb) // 2]
+        ax_sp.axvline(med_sp, color="black", linestyle="--", linewidth=1, alpha=0.6)
+        ax_sp.text(med_sp * 1.02, ax_sp.get_ylim()[1] * 0.92,
+                   f"med\n{med_sp:.1f} kb", fontsize=7, va="top")
+        ax_sp.annotate(f"n={len(sp_kb):,} pairs\n{len(rrna_arrays)} arrays",
+                       xy=(0.97, 0.97), xycoords="axes fraction",
+                       ha="right", va="top", fontsize=8)
+    else:
+        ax_sp.text(0.5, 0.5, "No rRNA arrays", ha="center", va="center",
+                   transform=ax_sp.transAxes, color=_C_OTHER)
+    ax_sp.set_title("rRNA inter-copy spacing\n(within arrays)", fontsize=9)
+    ax_sp.set_xlabel("Spacing (kb)", fontsize=8)
+    ax_sp.set_ylabel("Count", fontsize=8)
+    ax_sp.spines[["top", "right"]].set_visible(False)
+
+    # ── Row 2c: Array size distribution ───────────────────────────────────────
+    ax_sz = fig.add_subplot(gs[1, max(2, n_sub * 3 // 4):])
+    r_sizes = [a["n_copies"] for a in rrna_arrays]
+    t_sizes = [a["n_copies"] for a in trna_arrays]
+    hi_sz = max((r_sizes or [0]) + (t_sizes or [0]) + [2])
+    bins_sz = list(range(2, hi_sz + 2))
+    if r_sizes:
+        ax_sz.hist(r_sizes, bins=bins_sz, color=_C_RRNA, alpha=0.75,
+                   label=f"rRNA  n={len(r_sizes)} arrays")
+    if t_sizes:
+        ax_sz.hist(t_sizes, bins=bins_sz, color=_C_TRNA, alpha=0.75,
+                   label=f"tRNA  n={len(t_sizes)} arrays")
+    ax_sz.set_title("Tandem array size\ndistribution", fontsize=9)
+    ax_sz.set_xlabel("Copies per array", fontsize=8)
+    ax_sz.set_ylabel("Number of arrays", fontsize=8)
+    ax_sz.legend(fontsize=8, frameon=False)
+    ax_sz.spines[["top", "right"]].set_visible(False)
+
+    fig.suptitle(f"{prefix}  —  evolutionary analysis", fontsize=11, y=1.01)
+
+    for fmt in plot_formats:
+        out_path = out_base.with_suffix(f".{fmt}")
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        _log(f"  Plot saved: {out_path.name}")
+    plt.close(fig)
+
+
+# ── Module 6 main ─────────────────────────────────────────────────────────────
+
+def run_module6_evolution(fasta: Path,
+                          rrna_gff: Path, trna_gff: Path,
+                          rfam_dir: Path, workdir: Path, results: Path,
+                          prefix: str, genome_size: int, threads: int,
+                          plot_formats: list, force: bool) -> None:
+    """Evolutionary analysis: score distributions, pseudogene classification,
+    tandem array detection."""
+
+    # ── 6a: rRNA bit score distribution ───────────────────────────────────────
+    _banner("Module 6a — rRNA Score Distribution")
+    rrna_records = _parse_gff3_records(rrna_gff)
+
+    rrna_score_tsv = results / f"mod06_rrna_scores_{prefix}.tsv"
+    if rrna_records:
+        if force or not rrna_score_tsv.exists():
+            with open(rrna_score_tsv, "w") as fh:
+                fh.write("feature_id\tseqname\tstart\tend\tstrand\t"
+                         "subtype\tlength_bp\tbit_score\tevalue\n")
+                for r in rrna_records:
+                    fh.write(
+                        f"{r['feat_id']}\t{r['seqname']}\t{r['start']}\t"
+                        f"{r['end']}\t{r['strand']}\t{r['subtype']}\t"
+                        f"{r['length']}\t"
+                        f"{'NA' if r['score']  is None else r['score']}\t"
+                        f"{'NA' if r['evalue'] is None else r['evalue']}\n"
+                    )
+        scored = [r for r in rrna_records if r["score"] is not None]
+        _log(f"  {len(scored):,} / {len(rrna_records):,} rRNA copies have bit scores")
+        for sub in _RRNA_ORDER:
+            sub_scores = [r["score"] for r in scored if r["subtype"] == sub]
+            if sub_scores:
+                med = sorted(sub_scores)[len(sub_scores) // 2]
+                _log(f"    {sub:30s}  n={len(sub_scores):6,}  "
+                     f"median score={med:.1f}  "
+                     f"min={min(sub_scores):.1f}  max={max(sub_scores):.1f}")
+    else:
+        _log("  No rRNA records found — skipping 6a")
+
+    # ── 6b: tRNA pseudogene classification ────────────────────────────────────
+    _banner("Module 6b — tRNA Pseudogene Classification")
+    trna_records    = _parse_gff3_records(trna_gff)
+    trna_classified = []
+
+    if trna_records:
+        _log(f"  Extracting {len(trna_records):,} tRNA sequences …")
+        trna_seqs = _extract_sequences(fasta, trna_records)
+        _log(f"  Extracted {len(trna_seqs):,} sequences")
+
+        trna_cm   = _ensure_trna_cm(rfam_dir)
+        cm_scores = _score_trnas_cmsearch(trna_seqs, trna_cm, workdir, threads, force)
+        _log(f"  cmsearch scored {len(cm_scores):,} tRNAs")
+
+        trna_classified = _classify_trnas(trna_records, cm_scores)
+        n_pseudo = sum(1 for t in trna_classified if t["category"] == "pseudogene")
+        n_func   = len(trna_classified) - n_pseudo
+        _log(f"  Functional: {n_func:,}   Pseudogene candidates: {n_pseudo:,}")
+
+        # Breakdown of pseudogene reasons
+        from collections import Counter as _Counter
+        reason_counts = _Counter()
+        for t in trna_classified:
+            if t["category"] == "pseudogene":
+                for tok in t["reason"].split(";"):
+                    reason_counts[tok.strip()] += 1
+        for reason, cnt in reason_counts.most_common():
+            _log(f"    {reason}: {cnt:,}")
+
+        trna_class_tsv = results / f"mod06_trna_class_{prefix}.tsv"
+        if force or not trna_class_tsv.exists():
+            with open(trna_class_tsv, "w") as fh:
+                fh.write("feature_id\tseqname\tstart\tend\tstrand\tsubtype\t"
+                         "anticodon\tlength_bp\tcm_score\tcategory\treason\n")
+                for t in trna_classified:
+                    sc = f"{t['cm_score']:.1f}" if t["cm_score"] is not None else "NA"
+                    fh.write(
+                        f"{t['feat_id']}\t{t['seqname']}\t{t['start']}\t"
+                        f"{t['end']}\t{t['strand']}\t{t['subtype']}\t"
+                        f"{t['anticodon']}\t{t['length']}\t"
+                        f"{sc}\t{t['category']}\t{t['reason']}\n"
+                    )
+            _log(f"  Written: {trna_class_tsv.name}")
+    else:
+        _log("  No tRNA records found — skipping 6b")
+
+    # ── 6c: Tandem array detection ────────────────────────────────────────────
+    _banner("Module 6c — Tandem Array Detection")
+
+    rrna_arrays = _detect_arrays(rrna_records, max_gap=_RRNA_ARRAY_GAP) if rrna_records else []
+    trna_arrays = _detect_arrays(trna_records, max_gap=_TRNA_ARRAY_GAP) if trna_records else []
+
+    if rrna_arrays:
+        total_units = sum(a["complete_rDNA_units"] for a in rrna_arrays)
+        _log(f"  rRNA: {len(rrna_arrays)} arrays on "
+             f"{len({a['seqname'] for a in rrna_arrays})} sequences  |  "
+             f"~{total_units} complete rDNA units")
+        sizes = [a["n_copies"] for a in rrna_arrays]
+        _log(f"    copies/array: min={min(sizes)}  median={sorted(sizes)[len(sizes)//2]}  "
+             f"max={max(sizes)}")
+        all_sp = [s for a in rrna_arrays for s in a["spacings"]]
+        if all_sp:
+            med_sp = sorted(all_sp)[len(all_sp) // 2]
+            _log(f"    inter-copy spacing: median={med_sp/1000:.1f} kb  "
+                 f"min={min(all_sp)/1000:.1f} kb  max={max(all_sp)/1000:.1f} kb")
+    else:
+        _log("  No rRNA arrays detected")
+
+    if trna_arrays:
+        _log(f"  tRNA: {len(trna_arrays)} arrays on "
+             f"{len({a['seqname'] for a in trna_arrays})} sequences")
+    else:
+        _log("  No tRNA arrays detected")
+
+    arrays_tsv = results / f"mod06_arrays_{prefix}.tsv"
+    all_arrays = ([{"feature_class": "rRNA", **a} for a in rrna_arrays] +
+                  [{"feature_class": "tRNA", **a} for a in trna_arrays])
+    if all_arrays and (force or not arrays_tsv.exists()):
+        with open(arrays_tsv, "w") as fh:
+            fh.write("feature_class\tarray_id\tseqname\tarray_start\tarray_end\t"
+                     "n_copies\tarray_length_bp\tmean_spacing_bp\t"
+                     "min_spacing_bp\tmax_spacing_bp\t"
+                     "complete_rDNA_units\tsubtype_counts\n")
+            for a in all_arrays:
+                sub = ";".join(f"{k}:{v}" for k, v in sorted(a["subtypes"].items()))
+                fh.write(
+                    f"{a['feature_class']}\t{a['array_id']}\t{a['seqname']}\t"
+                    f"{a['array_start']}\t{a['array_end']}\t{a['n_copies']}\t"
+                    f"{a['array_length_bp']}\t{a['mean_spacing_bp']}\t"
+                    f"{a['min_spacing_bp']}\t{a['max_spacing_bp']}\t"
+                    f"{a.get('complete_rDNA_units', 0)}\t{sub}\n"
+                )
+        _log(f"  Written: {arrays_tsv.name}")
+
+    # ── 6d: Plots ─────────────────────────────────────────────────────────────
+    _banner("Module 6d — Evolution Plots")
+    out_base  = results / f"mod06_evolution_{prefix}"
+    out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
+    if not _checkpoint(out_paths[0], "evolution plots", force):
+        _plot_evolution(rrna_records, trna_classified,
+                        rrna_arrays, trna_arrays,
+                        out_base, plot_formats, prefix)
+
+
 # ── Argument parser ───────────────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1278,7 +1774,7 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Comma-separated list of module numbers to skip "
                           "(e.g. --skip_module 0,1,2). "
                           "0=telomere  1=masking  2=rRNA  3=tRNA  "
-                          "4=integration  5=visualization. "
+                          "4=integration  5=visualization  6=evolution. "
                           "Skipped modules are not rerun, but their outputs "
                           "from previous runs are picked up automatically.")
     gen.add_argument("--format", default="pdf",
@@ -1347,6 +1843,8 @@ def main() -> None:
     _log(f"  Threads     : {args.threads}")
     genome_size = _fasta_total_length(args.fasta)
     _log(f"  Genome size : {genome_size:,} bp")
+    rfam_dir = args.rfam_dir or _DEFAULT_CACHE
+    rfam_dir.mkdir(parents=True, exist_ok=True)
 
     # Parse --skip_module into a set of ints
     skip_modules: set = set()
@@ -1388,6 +1886,8 @@ def main() -> None:
         if 5 not in skip_modules:
             fmt0 = args.format.split(",")[0].strip()
             _log(f"    [5] Visualization ({args.sort_sequences})  →  results/mod05_plot_*.{fmt0}")
+        if 6 not in skip_modules:
+            _log("    [6] Evolutionary analysis       →  results/mod06_*.tsv + mod06_evolution_*")
         _log("  Exiting (--dry_run).")
         if _LOG_FH:
             _LOG_FH.close()
@@ -1534,6 +2034,23 @@ def main() -> None:
             top_sequences = args.top_sequences,
             sort_by       = args.sort_sequences,
             force         = args.force,
+        )
+
+    # ── Module 6: Evolutionary analysis ───────────────────────────────────────
+    evo_out = results / f"mod06_rrna_scores_{prefix}.tsv"
+    if not _skip(6, "evolutionary analysis", evo_out):
+        run_module6_evolution(
+            fasta        = args.fasta,
+            rrna_gff     = rrna_gff,
+            trna_gff     = trna_gff,
+            rfam_dir     = rfam_dir,
+            workdir      = workdir,
+            results      = results,
+            prefix       = prefix,
+            genome_size  = genome_size,
+            threads      = args.threads,
+            plot_formats = plot_formats,
+            force        = args.force,
         )
 
     # ── Resource usage & run summary ──────────────────────────────────────────
