@@ -827,8 +827,10 @@ def main() -> None:
             )
             _tracker.start()
             _log("  codecarbon tracker started")
-        except ImportError:
-            _log("  codecarbon not installed — carbon tracking skipped")
+        except ImportError as e:
+            _log(f"  codecarbon not installed — carbon tracking skipped ({e})")
+        except Exception as e:
+            _log(f"  codecarbon failed to start — carbon tracking skipped ({e})")
 
     # ── Module 0: Telomere identification ─────────────────────────────────────
     tel_gff    = None
