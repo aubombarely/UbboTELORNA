@@ -385,17 +385,7 @@ def run_module1_masking(fasta: Path, workdir: Path, force: bool) -> Path:
         return masked
 
     tantan = _require_tool("tantan")
-    _run([tantan, "-m", "0", str(fasta)],
-         capture_stdout=True, cwd=workdir)
-
-    # tantan writes to stdout; capture and save
-    result = subprocess.run(
-        [tantan, "-m", "0", str(fasta)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    )
-    if result.returncode != 0:
-        print(f"ERROR: tantan failed:\n{result.stderr[-2000:]}", file=sys.stderr)
-        sys.exit(1)
+    result = _run([tantan, str(fasta.resolve())], capture_stdout=True)
     masked.write_text(result.stdout)
     _log(f"  Soft-masked FASTA: {masked.name}")
 
