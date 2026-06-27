@@ -1,11 +1,13 @@
-<div align="center">
+<p align="center">
 <img src="assets/UbboTELORNA_logo.svg" width="260"/>
+</p>
 
+<p align="center">
 <img src="https://img.shields.io/badge/version-v0.1.0-teal"/>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue"/>
 <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey"/>
-&nbsp;[CHANGELOG](CHANGELOG.md)
-</div>
+<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.1.0-orange"/></a>
+</p>
 
 ---
 
@@ -319,6 +321,16 @@ UbboTELORNA is a drop-in replacement for the barrnap + tRNAscan-SE step in
 [YuggASMoth](../YuggASMoth/) (Module 1).  Use the combined GFF3 output
 (`mod04_annotation_{prefix}.gff3`) directly as the rDNA/tRNA annotation input
 to YuggASMoth's filtering step.
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+**v0.1.0** _(2026-06-27)_ — initial release: telomere k-mer scan, tantan
+masking, Infernal cmsearch rRNA annotation, ARAGORN tRNA annotation, GFF3
+integration.
 
 ---
 

@@ -4,6 +4,14 @@
       <stop offset="0%" stop-color="#1a3d5c"/>
       <stop offset="100%" stop-color="#080f1a"/>
     </radialGradient>
+    <!-- Soft glow for the protoplasmic blob -->
+    <filter id="protoGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
 
   <!-- Outer shadow ring -->
@@ -67,6 +75,44 @@
         font-family="'Courier New', monospace" font-size="8"
         fill="#E8604C" font-weight="bold"
         transform="rotate(-30, 54, 90)">tRNA</text>
+
+  <!-- ── Protoplasmic blob (Ubbo-Sathla) ──────────────────────────────────
+       An amorphous, amoeba-like shadow under the text, evoking the
+       formless primordial mass from Clark Ashton Smith's "Ubbo-Sathla".
+
+       Main blob path: three pseudopod extensions radiate from the body —
+         · upper-right (toward the telomere arc)
+         · lower-centre (bulging downward)
+         · left (toward the tRNA arc)
+       The nucleus is a smaller inner highlight blob giving depth.
+  -->
+  <!-- Main protoplasmic body -->
+  <path d="
+    M 138 70
+    C 158 60, 184 62, 200 78
+    C 218 96, 216 116, 206 132
+    C 198 145, 184 146, 186 162
+    C 188 178, 198 188, 185 196
+    C 172 204, 152 198, 136 194
+    C 120 190, 104 194, 88 186
+    C 72 178, 60 162, 58 146
+    C 56 130, 64 115, 58 100
+    C 52 85, 46 68, 62 60
+    C 78 52, 98 60, 114 66
+    C 124 70, 130 70, 138 70
+    Z"
+    fill="#0d5068" opacity="0.38" filter="url(#protoGlow)"/>
+
+  <!-- Inner nucleus highlight — gives the blob a wet, translucent look -->
+  <path d="
+    M 136 90
+    C 148 84, 164 86, 172 98
+    C 180 110, 178 128, 168 138
+    C 158 148, 142 150, 130 144
+    C 118 138, 108 126, 110 114
+    C 112 102, 124 92, 136 90
+    Z"
+    fill="#1a7a92" opacity="0.20"/>
 
   <!-- Mythos entity name (small, italic) -->
   <text x="130" y="62" text-anchor="middle"
