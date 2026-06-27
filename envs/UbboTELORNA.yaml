@@ -1,0 +1,11 @@
+name: ubbotelorna
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - infernal          # cmsearch — rRNA annotation (Module 2)
+  - aragorn           # tRNA annotation (Module 3)
+  - tantan            # low-complexity masking (Module 1)
+  - codecarbon        # optional; enables carbon footprint tracking

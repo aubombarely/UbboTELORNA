@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Pipeline working directories (large intermediate files)
+workdir/
+*/workdir/
+*.sam
+*.bam
+*.bai
+*.msh
+
+# Run outputs (reproducible from inputs; don't commit)
+*/results/
+*/logs/
+
+# Rfam CM cache (downloaded at runtime)
+~/.ubbotelorna/
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
