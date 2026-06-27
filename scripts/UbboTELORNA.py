@@ -1012,12 +1012,17 @@ _RRNA_ORDER = [
 ]
 
 
+def _natural_key(s: str) -> list:
+    """Natural sort key: splits on digit runs so Chr2 < Chr10."""
+    return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", s)]
+
+
 def run_module5_plot(fasta: Path,
                      tel_gff: Path | None, rrna_gff: Path | None,
                      trna_gff: Path | None, summary_tsv: Path | None,
                      genome_size: int, results: Path, prefix: str,
                      plot_formats: list, top_sequences: int,
-                     force: bool) -> None:
+                     sort_by: str, force: bool) -> None:
     """Generate 3-panel figure: ideogram, subtype bars, composition donut."""
 
     out_base  = results / f"mod05_plot_{prefix}"
@@ -1032,15 +1037,20 @@ def run_module5_plot(fasta: Path,
     trna_pos    = _parse_gff3_positions(trna_gff)
     summ        = _parse_summary_tsv(summary_tsv)
 
-    # Top N sequences by length, descending
-    top_seqs = sorted(seq_lengths.items(), key=lambda x: -x[1])[:top_sequences]
+    # Select and sort top N sequences
+    if sort_by == "seqid":
+        top_seqs = sorted(seq_lengths.items(), key=lambda x: _natural_key(x[0]))[:top_sequences]
+    else:
+        top_seqs = sorted(seq_lengths.items(), key=lambda x: -x[1])[:top_sequences]
+
     if not top_seqs:
         _log("  [Module 5] No sequences found — skipping plot")
         return
 
-    max_len = top_seqs[0][1]
+    max_len = max(slen for _, slen in top_seqs)
     n_seqs  = len(top_seqs)
-    _log(f"  Plotting top {n_seqs} sequences (longest: {max_len:,} bp)")
+    _log(f"  Plotting {n_seqs} sequences, sorted by {sort_by} "
+         f"(longest: {max_len:,} bp)")
 
     # ── Figure layout ──────────────────────────────────────────────────────────
     ideo_h = max(4, min(n_seqs * 0.28, 14))   # scale height with seq count
@@ -1055,7 +1065,21 @@ def run_module5_plot(fasta: Path,
 
     # ── Panel 1: Genome ideogram ───────────────────────────────────────────────
     bar_h   = 0.65
-    min_vis = max_len * 0.002   # minimum visible width (0.2 % of longest seq)
+    tel_h   = bar_h + 0.30          # telomeres drawn taller so they stand out
+    min_vis = max_len * 0.002       # 0.2 % of longest seq — minimum visible width
+    tel_min = max_len * 0.005       # 0.5 % — telomeres get a wider minimum
+
+    # Count total features per type to decide draw order (most abundant = first/bottom)
+    n_rrna_total = sum(len(v) for v in rrna_pos.values())
+    n_trna_total = sum(len(v) for v in trna_pos.values())
+    n_tel_total  = sum(len(v) for v in tel_pos.values())
+
+    # Sort layers: most abundant drawn first (bottom), rarest drawn last (top)
+    layers = sorted([
+        ("rrna", n_rrna_total, _C_RRNA, 0.40, bar_h),
+        ("trna", n_trna_total, _C_TRNA, 0.60, bar_h),
+        ("tel",  n_tel_total,  _C_TEL,  1.00, tel_h),
+    ], key=lambda x: -x[1])    # descending count → bottom to top
 
     for i, (name, slen) in enumerate(top_seqs):
         y = n_seqs - i - 1
@@ -1064,23 +1088,20 @@ def run_module5_plot(fasta: Path,
         ax_ideo.broken_barh([(0, slen)], (y - bar_h / 2, bar_h),
                             facecolors=_C_OTHER, alpha=0.18, linewidth=0)
 
-        # rRNA — draw first (bottom layer), alpha blending creates density effect
-        segs = [(s - 1, max(e - s + 1, min_vis)) for s, e in rrna_pos.get(name, [])]
-        if segs:
-            ax_ideo.broken_barh(segs, (y - bar_h / 2, bar_h),
-                                facecolors=_C_RRNA, alpha=0.45, linewidth=0)
-
-        # tRNA
-        segs = [(s - 1, max(e - s + 1, min_vis)) for s, e in trna_pos.get(name, [])]
-        if segs:
-            ax_ideo.broken_barh(segs, (y - bar_h / 2, bar_h),
-                                facecolors=_C_TRNA, alpha=0.65, linewidth=0)
-
-        # Telomeres — top layer, fully opaque, slightly taller
-        segs = [(s - 1, max(e - s + 1, min_vis * 2)) for s, e in tel_pos.get(name, [])]
-        if segs:
-            ax_ideo.broken_barh(segs, (y - bar_h / 2 - 0.05, bar_h + 0.1),
-                                facecolors=_C_TEL, alpha=1.0, linewidth=0)
+        for layer_name, _, color, alpha, height in layers:
+            if layer_name == "rrna":
+                pos_list = rrna_pos.get(name, [])
+                mv = min_vis
+            elif layer_name == "trna":
+                pos_list = trna_pos.get(name, [])
+                mv = min_vis
+            else:
+                pos_list = tel_pos.get(name, [])
+                mv = tel_min
+            segs = [(s - 1, max(e - s + 1, mv)) for s, e in pos_list]
+            if segs:
+                ax_ideo.broken_barh(segs, (y - height / 2, height),
+                                    facecolors=color, alpha=alpha, linewidth=0)
 
     ax_ideo.set_ylim(-0.8, n_seqs - 0.2)
     ax_ideo.set_yticks(range(n_seqs))
@@ -1089,20 +1110,22 @@ def run_module5_plot(fasta: Path,
     ax_ideo.xaxis.set_major_formatter(
         mticker.FuncFormatter(lambda x, _: f"{x / 1e6:.0f} Mb"))
     ax_ideo.set_xlabel("Genomic position")
-    title_suffix = f"top {n_seqs} sequences" if n_seqs < len(seq_lengths) \
-                   else f"{n_seqs} sequences"
+    sort_label = "by SeqID" if sort_by == "seqid" else "longest first"
+    title_suffix = (f"top {n_seqs} of {len(seq_lengths)} sequences, {sort_label}"
+                    if n_seqs < len(seq_lengths)
+                    else f"{n_seqs} sequences, {sort_label}")
     ax_ideo.set_title(f"{prefix}  —  genome annotation overview  ({title_suffix})",
                       fontsize=11, pad=8)
     ax_ideo.spines[["top", "right", "left"]].set_visible(False)
     ax_ideo.tick_params(left=False)
 
     legend_patches = [
-        mpatches.Patch(color=_C_TEL,  label="Telomere"),
-        mpatches.Patch(color=_C_RRNA, alpha=0.45, label="rRNA"),
-        mpatches.Patch(color=_C_TRNA, alpha=0.65, label="tRNA"),
+        mpatches.Patch(color=_C_TEL,  label=f"Telomere (n={n_tel_total:,})"),
+        mpatches.Patch(color=_C_RRNA, alpha=0.40, label=f"rRNA (n={n_rrna_total:,})"),
+        mpatches.Patch(color=_C_TRNA, alpha=0.60, label=f"tRNA (n={n_trna_total:,})"),
     ]
-    ax_ideo.legend(handles=legend_patches, loc="upper right",
-                   frameon=False, fontsize=9)
+    ax_ideo.legend(handles=legend_patches, loc="lower right",
+                   frameon=True, framealpha=0.85, fontsize=9)
 
     # ── Panel 2: rRNA subtype bars ─────────────────────────────────────────────
     rrna_data = summ.get("rRNA", {})
@@ -1267,8 +1290,10 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Plot format(s): pdf, png, svg — comma-separated "
                           "(default: pdf)")
     gen.add_argument("--top_sequences", type=int, default=50,
-                     help="Number of sequences to show in the ideogram, "
-                          "sorted by length descending (default: 50)")
+                     help="Number of sequences to show in the ideogram (default: 50)")
+    gen.add_argument("--sort_sequences", choices=["length", "seqid"], default="length",
+                     help="Order sequences in the ideogram: 'length' (longest first) "
+                          "or 'seqid' (natural alphabetic/numeric sort); default: length")
     gen.add_argument("--force", action="store_true",
                      help="Rerun all steps even if outputs already exist")
     gen.add_argument("--dry_run", action="store_true",
@@ -1351,7 +1376,8 @@ def main() -> None:
         if not args.skip_integration:
             _log("    [4] Integration              →  results/mod04_annotation_*.gff3")
         if not args.skip_module5:
-            _log(f"    [5] Visualization            →  results/mod05_plot_*.{args.format.split(',')[0].strip()}")
+            fmt0 = args.format.split(",")[0].strip()
+            _log(f"    [5] Visualization ({args.sort_sequences})  →  results/mod05_plot_*.{fmt0}")
         _log("  Exiting (--dry_run).")
         if _LOG_FH:
             _LOG_FH.close()
@@ -1463,13 +1489,12 @@ def main() -> None:
 
     # ── Module 4: Integration ─────────────────────────────────────────────────
     counts: dict = {}
-    summary_tsv: Path | None = None
+    summary_tsv = results / f"mod04_summary_{prefix}.tsv"
     if not args.skip_integration:
         _banner("Module 4 — Integration")
         _, counts = run_module4_integration(
             tel_gff, rrna_gff, trna_gff, results, prefix,
             genome_size=genome_size)
-        summary_tsv = results / f"mod04_summary_{prefix}.tsv"
 
     # ── Module 5: Visualization ───────────────────────────────────────────────
     plot_formats = [f.strip().lstrip(".") for f in args.format.split(",")]
@@ -1486,6 +1511,7 @@ def main() -> None:
             prefix        = prefix,
             plot_formats  = plot_formats,
             top_sequences = args.top_sequences,
+            sort_by       = args.sort_sequences,
             force         = args.force,
         )
 

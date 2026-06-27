@@ -158,7 +158,8 @@ comparison of the two tools.
 | `--skip_integration` | — | Skip Module 4 (do not write merged GFF3) |
 | `--skip_module5` | — | Skip Module 5 (do not generate visualization figure) |
 | `--format` | `pdf` | Plot format(s): `pdf`, `png`, `svg` — comma-separated |
-| `--top_sequences` | `50` | Number of sequences shown in the ideogram, sorted by length |
+| `--top_sequences` | `50` | Number of sequences shown in the ideogram |
+| `--sort_sequences` | `length` | Ideogram sequence order: `length` (longest first) or `seqid` (natural Chr1/Chr2/… sort) |
 | `--force` | — | Rerun all steps even if outputs already exist |
 | `--dry_run` | — | Validate inputs, print steps, exit |
 | `--disable_co2_tracking` | — | Disable codecarbon carbon tracking |
@@ -275,7 +276,7 @@ and tRNA sequences.  The remaining fraction is labelled "Other".  Genome
 size in Mb is printed in the donut hole.  Percentages are derived from the
 `total_length_bp` column of the summary TSV.
 
-**Format and sequence count**
+**Format, sequence count, and ordering**
 
 ```bash
 # Save as PNG and SVG instead of PDF
@@ -284,10 +285,25 @@ python3 scripts/UbboTELORNA.py --fasta genome.fasta --output run/ \
     --skip_integration \
     --format png,svg
 
-# Show all scaffolds (e.g. fragmented assembly)
+# Sort sequences by chromosome name (Chr1, Chr2 … Chr20) rather than size
+python3 scripts/UbboTELORNA.py --fasta genome.fasta --output run/ \
+    --skip_module0 --skip_module1 --skip_module2 --skip_module3 \
+    --skip_integration \
+    --sort_sequences seqid
+
+# Show more scaffolds (e.g. fragmented assembly)
 python3 scripts/UbboTELORNA.py --fasta genome.fasta --output run/ \
     --top_sequences 200
 ```
+
+**Draw order and telomere visibility**
+
+Features are drawn from most abundant (bottom layer) to least abundant
+(top layer) based on the per-run feature counts — so rRNA (tens of thousands
+of copies) is painted first, tRNA on top of that, and telomeres last.
+Telomere bars are drawn 50% taller than the sequence bar so they stand out
+visually even when the rRNA density is high.  The legend in the lower-right
+corner of the ideogram includes the count for each feature type.
 
 ---
 
