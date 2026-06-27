@@ -8,4 +8,4 @@ dependencies:
   - infernal          # cmsearch — rRNA annotation (Module 2)
   - aragorn           # tRNA annotation (Module 3)
   - tantan            # low-complexity masking (Module 1)
-  - codecarbon        # optional; enables carbon footprint tracking
+  - conda-forge::codecarbon   # carbon footprint tracking
