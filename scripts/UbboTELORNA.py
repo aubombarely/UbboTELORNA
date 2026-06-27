@@ -185,6 +185,19 @@ def _write_fasta(records: list[tuple[str, str]], path: Path,
 _GFF3_HEADER = "##gff-version 3\n"
 
 
+def _gff3_name(line: str) -> str:
+    """Extract the Name= attribute value from a GFF3 data line.
+    Strips any trailing parenthesised anticodon, e.g. tRNA-Phe(GAA) → tRNA-Phe.
+    Returns empty string if Name is absent.
+    """
+    attrs = line.split("\t")[8] if line.count("\t") >= 8 else ""
+    for field in attrs.split(";"):
+        if field.startswith("Name="):
+            name = field[5:].strip()
+            return re.sub(r"\([^)]+\)$", "", name)
+    return ""
+
+
 def _gff3_sort_key(line: str) -> tuple:
     """Natural-sort key for a GFF3 data line: (seqid parts, start).
 
@@ -744,35 +757,34 @@ def run_module3_trna(fasta: Path, workdir: Path, results: Path,
 
 def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
                              trna_gff: Path | None,
-                             results: Path, prefix: str) -> Path:
-    """Merge GFF3 files and write a summary TSV."""
+                             results: Path, prefix: str) -> tuple[Path, dict]:
+    """Merge GFF3 files, sort by position, and write a detailed summary TSV.
+
+    Returns (combined_gff3_path, counts_dict) where counts_dict has keys
+    n_tel, n_rrna, n_trna, rrna_by_type {name: count}, trna_by_type {name: count},
+    tel_by_end {5prime: n, 3prime: n}.
+    """
+    from collections import Counter
+
     combined = results / f"mod04_annotation_{prefix}.gff3"
     summary  = results / f"mod04_summary_{prefix}.tsv"
 
-    n_tel  = 0
-    n_rrna = 0
-    n_trna = 0
-
-    # Collect all feature lines from each module GFF3, then sort globally
-    # by (SeqID natural, start) so features from all three types are
-    # interleaved by genomic position in the combined output.
+    # ── Collect and sort all feature lines ────────────────────────────────────
     all_lines: list[str] = []
-    for gff, label in [
-        (tel_gff,  "telomere"),
-        (rrna_gff, "rRNA"),
-        (trna_gff, "tRNA"),
+    tel_lines:  list[str] = []
+    rrna_lines: list[str] = []
+    trna_lines: list[str] = []
+
+    for gff, bucket in [
+        (tel_gff,  tel_lines),
+        (rrna_gff, rrna_lines),
+        (trna_gff, trna_lines),
     ]:
         if gff is None or not gff.exists():
             continue
         lines = [l for l in open(gff) if not l.startswith("#") and l.strip()]
+        bucket.extend(lines)
         all_lines.extend(lines)
-        count = len(lines)
-        if label == "telomere":
-            n_tel = count
-        elif label == "rRNA":
-            n_rrna = count
-        else:
-            n_trna = count
 
     all_lines.sort(key=_gff3_sort_key)
 
@@ -783,18 +795,78 @@ def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
 
     _log(f"  Combined GFF3: {combined.name}")
 
+    # ── Count subtypes ─────────────────────────────────────────────────────────
+    n_tel  = len(tel_lines)
+    n_rrna = len(rrna_lines)
+    n_trna = len(trna_lines)
+
+    tel_by_end   = Counter()   # 5prime / 3prime
+    rrna_by_type = Counter()   # 5S_rRNA, 5_8S_rRNA, SSU_rRNA_eukarya, …
+    trna_by_type = Counter()   # tRNA-Phe, tRNA-Ala, …
+
+    for line in tel_lines:
+        name = _gff3_name(line)          # "telomere_5prime" or "telomere_3prime"
+        end  = name.replace("telomere_", "") if name else "unknown"
+        tel_by_end[end] += 1
+
+    for line in rrna_lines:
+        rrna_by_type[_gff3_name(line) or "unknown"] += 1
+
+    for line in trna_lines:
+        trna_by_type[_gff3_name(line) or "unknown"] += 1
+
+    # ── Write detailed summary TSV ─────────────────────────────────────────────
     with open(summary, "w") as fh:
-        fh.write("feature_type\tcount\tsource_file\n")
-        for label, count, src in [
-            ("telomere", n_tel,  str(tel_gff)  if tel_gff  else "skipped"),
-            ("rRNA",     n_rrna, str(rrna_gff) if rrna_gff else "skipped"),
-            ("tRNA",     n_trna, str(trna_gff) if trna_gff else "skipped"),
-        ]:
-            fh.write(f"{label}\t{count}\t{src}\n")
+        fh.write("feature_type\tsubtype\tcount\n")
+
+        # Telomeres
+        fh.write(f"telomere\tTOTAL\t{n_tel}\n")
+        for end in sorted(tel_by_end):
+            fh.write(f"telomere\t{end}\t{tel_by_end[end]}\n")
+
+        # rRNA — preserve biological order (small → large subunit)
+        _RRNA_ORDER = [
+            "5S_rRNA", "5_8S_rRNA",
+            "SSU_rRNA_eukarya", "SSU_rRNA_bacteria", "SSU_rRNA_archaea",
+            "LSU_rRNA_eukarya", "LSU_rRNA_bacteria", "LSU_rRNA_archaea",
+        ]
+        fh.write(f"rRNA\tTOTAL\t{n_rrna}\n")
+        for rtype in _RRNA_ORDER:
+            if rtype in rrna_by_type:
+                fh.write(f"rRNA\t{rtype}\t{rrna_by_type[rtype]}\n")
+        for rtype in sorted(rrna_by_type):   # any extra models not in the list
+            if rtype not in _RRNA_ORDER:
+                fh.write(f"rRNA\t{rtype}\t{rrna_by_type[rtype]}\n")
+
+        # tRNA — sorted by count descending, then alphabetically
+        fh.write(f"tRNA\tTOTAL\t{n_trna}\n")
+        for ttype, cnt in sorted(trna_by_type.items(),
+                                  key=lambda x: (-x[1], x[0])):
+            fh.write(f"tRNA\t{ttype}\t{cnt}\n")
 
     _log(f"  Summary TSV: {summary.name}")
+
+    # ── Log breakdown ──────────────────────────────────────────────────────────
     _log(f"  Totals  →  telomeres: {n_tel}  |  rRNA: {n_rrna}  |  tRNA: {n_trna}")
-    return combined
+    if rrna_by_type:
+        _log("  rRNA breakdown:")
+        for rtype in _RRNA_ORDER:
+            if rtype in rrna_by_type:
+                _log(f"    {rtype:30s} {rrna_by_type[rtype]:>6}")
+    if trna_by_type:
+        top = sorted(trna_by_type.items(), key=lambda x: -x[1])[:5]
+        _log("  tRNA top types (count): " +
+             "  ".join(f"{t}:{c}" for t, c in top))
+
+    counts = {
+        "n_tel":        n_tel,
+        "n_rrna":       n_rrna,
+        "n_trna":       n_trna,
+        "tel_by_end":   dict(tel_by_end),
+        "rrna_by_type": dict(rrna_by_type),
+        "trna_by_type": dict(trna_by_type),
+    }
+    return combined, counts
 
 
 # ── Argument parser ───────────────────────────────────────────────────────────
@@ -1052,9 +1124,11 @@ def main() -> None:
         )
 
     # ── Module 4: Integration ─────────────────────────────────────────────────
+    counts: dict = {}
     if not args.skip_integration:
         _banner("Module 4 — Integration")
-        run_module4_integration(tel_gff, rrna_gff, trna_gff, results, prefix)
+        _, counts = run_module4_integration(
+            tel_gff, rrna_gff, trna_gff, results, prefix)
 
     # ── Resource usage & run summary ──────────────────────────────────────────
     elapsed_s   = time.monotonic() - t_start
@@ -1081,8 +1155,23 @@ def main() -> None:
             "telomere_density": args.telomere_density,
             "telomere_min_len": args.telomere_min_len,
             "evalue":           args.evalue,
+            "search_tool":      args.search_tool,
             "threads":          args.threads,
         },
+        "feature_counts": {
+            "telomere": {
+                "total":    counts.get("n_tel",  0),
+                "by_end":   counts.get("tel_by_end",   {}),
+            },
+            "rRNA": {
+                "total":    counts.get("n_rrna", 0),
+                "by_type":  counts.get("rrna_by_type", {}),
+            },
+            "tRNA": {
+                "total":    counts.get("n_trna", 0),
+                "by_type":  counts.get("trna_by_type", {}),
+            },
+        } if counts else {},
         "resource_usage": {
             "wall_clock_s":       round(elapsed_s, 1),
             "peak_mem_mb":        round(peak_mem_mb, 1),
