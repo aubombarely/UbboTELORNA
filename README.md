@@ -65,9 +65,14 @@ comparison of nhmmer vs cmsearch: speed, memory, sensitivity, and when to use ea
 | `archaea` | SSU_rRNA_archaea | RF01959 | 16S archaeal rRNA |
 | `archaea` | LSU_rRNA_archaea | RF02540 | 23S archaeal rRNA |
 
-Models are downloaded automatically from `https://rfam.org/` on first use and
-cached in `~/.ubbotelorna/rfam/` (both `.hmm` and `.cm` files).
-On **air-gapped HPC nodes**, download them once on a machine with internet
+On first use, models are fetched automatically from `https://rfam.org/`:
+
+- **nhmmer** — downloads the Rfam seed alignment (Stockholm) for each
+  family and builds a HMMER3 `.hmm` profile with `hmmbuild --rna`.
+- **cmsearch** — downloads the Rfam `.cm` covariance model directly.
+
+All files are cached in `~/.ubbotelorna/rfam/`.  On **air-gapped HPC
+nodes**, build or download the files once on a machine with internet
 access and supply the directory with `--rfam_dir /path/to/rfam/`.
 
 ---

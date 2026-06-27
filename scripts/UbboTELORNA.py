@@ -56,7 +56,7 @@ _RFAM_CMS = {
     },
 }
 _RFAM_CM_URL  = "https://rfam.org/family/{acc}/cm"
-_RFAM_HMM_URL = "https://rfam.org/family/{acc}/hmm"
+_RFAM_STO_URL = "https://rfam.org/family/{acc}/alignment?format=stockholm&download=1"
 _DEFAULT_CACHE = Path.home() / ".ubbotelorna" / "rfam"
 
 # ── Telomere repeat defaults ───────────────────────────────────────────────────
@@ -444,8 +444,10 @@ def _ensure_cms(kingdom: str, rfam_dir: Path | None) -> Path:
 
 def _ensure_hmms(kingdom: str, rfam_dir: Path | None) -> Path:
     """
-    Download (if needed) and return path to a concatenated .hmm file
-    containing all HMM profiles for the given kingdom.
+    Build (if needed) and return path to a concatenated HMMER3 .hmm file for
+    the given kingdom.  Strategy: download the Rfam seed Stockholm alignment
+    for each family and build an HMM with hmmbuild.  The Rfam REST API does
+    not expose standalone .hmm files, but the Stockholm endpoint is stable.
     """
     cache = rfam_dir or _DEFAULT_CACHE
     cache.mkdir(parents=True, exist_ok=True)
@@ -457,20 +459,28 @@ def _ensure_hmms(kingdom: str, rfam_dir: Path | None) -> Path:
         _log(f"  Using cached Rfam HMMs: {combined}")
         return combined
 
-    _log(f"  Downloading Rfam HMMs for kingdom '{kingdom}' …")
+    hmmbuild = _require_tool("hmmbuild")
+
+    _log(f"  Building Rfam HMMs for kingdom '{kingdom}' …")
     hmm_parts = []
     for name, acc in models.items():
         hmm_path = cache / f"{acc}.hmm"
         if not hmm_path.exists():
-            url = _RFAM_HMM_URL.format(acc=acc)
-            _log(f"    Downloading {acc} ({name}) from {url}")
-            try:
-                urlretrieve(url, hmm_path)
-            except Exception as exc:
-                print(f"ERROR: failed to download {url}: {exc}\n"
-                      f"       Check internet access or provide --rfam_dir with "
-                      f"pre-downloaded .hmm files.", file=sys.stderr)
-                sys.exit(1)
+            sto_path = cache / f"{acc}.sto"
+            if not sto_path.exists():
+                url = _RFAM_STO_URL.format(acc=acc)
+                _log(f"    Downloading {acc} ({name}) seed alignment from Rfam …")
+                try:
+                    urlretrieve(url, sto_path)
+                except Exception as exc:
+                    print(f"ERROR: failed to download {url}: {exc}\n"
+                          f"       Check internet access or provide --rfam_dir with "
+                          f"pre-built .hmm files.", file=sys.stderr)
+                    sys.exit(1)
+            _log(f"    Building HMM for {acc} ({name}) …")
+            _run([hmmbuild, "--rna", "--cpu", "1",
+                  str(hmm_path), str(sto_path)],
+                 capture_stdout=True)
         hmm_parts.append(hmm_path.read_text())
 
     combined.write_text("\n".join(hmm_parts))

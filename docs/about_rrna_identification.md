@@ -17,8 +17,12 @@ but does not model RNA secondary structure.  The search algorithm is
 O(L × M) where L is the genome length and M is the model length —
 essentially a single pass through the sequence per model.
 
-Rfam HMM profiles are downloaded from `https://rfam.org/family/{acc}/hmm`
-and cached in `~/.ubbotelorna/rfam/` as `ubbotelorna_{kingdom}.hmm`.
+Rfam seed alignments (Stockholm format) are downloaded from
+`https://rfam.org/family/{acc}/alignment?format=stockholm` and used to
+build HMMER3 HMM profiles with `hmmbuild --rna`.  Built profiles are cached
+in `~/.ubbotelorna/rfam/` as `{acc}.hmm` and concatenated into
+`ubbotelorna_{kingdom}.hmm`.  The Rfam REST API does not expose standalone
+HMM files, so this build step is required on first use.
 
 ### cmsearch (Infernal)
 
