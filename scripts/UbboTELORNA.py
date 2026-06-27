@@ -1274,18 +1274,13 @@ def _build_parser() -> argparse.ArgumentParser:
     gen = ap.add_argument_group("General")
     gen.add_argument("--threads", type=int, default=4,
                      help="CPU threads for cmsearch (default: 4)")
-    gen.add_argument("--skip_module0", action="store_true",
-                     help="Skip Module 0 — telomere identification")
-    gen.add_argument("--skip_module1", action="store_true",
-                     help="Skip Module 1 — low-complexity masking")
-    gen.add_argument("--skip_module2", action="store_true",
-                     help="Skip Module 2 — rRNA annotation")
-    gen.add_argument("--skip_module3", action="store_true",
-                     help="Skip Module 3 — tRNA annotation")
-    gen.add_argument("--skip_integration", action="store_true",
-                     help="Skip Module 4 — do not produce merged GFF3")
-    gen.add_argument("--skip_module5", action="store_true",
-                     help="Skip Module 5 — do not produce visualization figure")
+    gen.add_argument("--skip_module", default="",
+                     help="Comma-separated list of module numbers to skip "
+                          "(e.g. --skip_module 0,1,2). "
+                          "0=telomere  1=masking  2=rRNA  3=tRNA  "
+                          "4=integration  5=visualization. "
+                          "Skipped modules are not rerun, but their outputs "
+                          "from previous runs are picked up automatically.")
     gen.add_argument("--format", default="pdf",
                      help="Plot format(s): pdf, png, svg — comma-separated "
                           "(default: pdf)")
@@ -1353,6 +1348,21 @@ def main() -> None:
     genome_size = _fasta_total_length(args.fasta)
     _log(f"  Genome size : {genome_size:,} bp")
 
+    # Parse --skip_module into a set of ints
+    skip_modules: set = set()
+    if args.skip_module.strip():
+        for tok in args.skip_module.split(","):
+            tok = tok.strip()
+            if tok:
+                try:
+                    skip_modules.add(int(tok))
+                except ValueError:
+                    print(f"ERROR: --skip_module value '{tok}' is not a module number",
+                          file=sys.stderr)
+                    sys.exit(1)
+    if skip_modules:
+        _log(f"  Skipping modules: {sorted(skip_modules)}")
+
     if args.force:
         _log("  --force set: all steps will rerun regardless of existing outputs")
     elif workdir.exists() and any(workdir.iterdir()):
@@ -1365,17 +1375,17 @@ def main() -> None:
         _log(f"  FASTA       : {args.fasta}")
         _log(f"  Output      : {run_dir}/")
         _log("  Steps that would run:")
-        if not args.skip_module0:
+        if 0 not in skip_modules:
             _log("    [0] Telomere identification  →  results/mod00_telomeres_*.gff3")
-        if not args.skip_module1:
+        if 1 not in skip_modules:
             _log("    [1] Low-complexity masking   →  workdir/masked_soft.fasta")
-        if not args.skip_module2:
+        if 2 not in skip_modules:
             _log(f"    [2] rRNA annotation ({args.search_tool})  →  results/mod02_rRNA_*.gff3")
-        if not args.skip_module3:
+        if 3 not in skip_modules:
             _log("    [3] tRNA annotation          →  results/mod03_tRNA_*.gff3")
-        if not args.skip_integration:
+        if 4 not in skip_modules:
             _log("    [4] Integration              →  results/mod04_annotation_*.gff3")
-        if not args.skip_module5:
+        if 5 not in skip_modules:
             fmt0 = args.format.split(",")[0].strip()
             _log(f"    [5] Visualization ({args.sort_sequences})  →  results/mod05_plot_*.{fmt0}")
         _log("  Exiting (--dry_run).")
@@ -1431,10 +1441,19 @@ def main() -> None:
         except Exception as e:
             _log(f"  codecarbon failed to start — carbon tracking skipped ({e})")
 
+    def _skip(n: int, label: str, path: Path | None = None) -> bool:
+        if n in skip_modules:
+            if path and path.exists() and path.stat().st_size > 0:
+                _log(f"  [Module {n}] skipped — picking up existing {path.name}")
+            else:
+                _log(f"  [Module {n}] skipped ({label})")
+            return True
+        return False
+
     # ── Module 0: Telomere identification ─────────────────────────────────────
     tel_gff     = results / f"mod00_telomeres_{prefix}.gff3"
     repeat_used = None
-    if not args.skip_module0:
+    if not _skip(0, "telomere identification", tel_gff):
         _banner("Module 0 — Telomere Identification")
         tel_gff, repeat_used = run_module0_telomeres(
             fasta       = args.fasta,
@@ -1449,7 +1468,8 @@ def main() -> None:
         )
 
     # ── Module 1: Low-complexity masking ──────────────────────────────────────
-    if not args.skip_module1:
+    masked_soft = workdir / "masked_soft.fasta"
+    if not _skip(1, "low-complexity masking", masked_soft):
         _banner("Module 1 — Low-Complexity Masking")
         run_module1_masking(
             fasta   = args.fasta,
@@ -1459,7 +1479,7 @@ def main() -> None:
 
     # ── Module 2: rRNA annotation ─────────────────────────────────────────────
     rrna_gff = results / f"mod02_rRNA_{prefix}.gff3"
-    if not args.skip_module2:
+    if not _skip(2, "rRNA annotation", rrna_gff):
         _banner("Module 2 — rRNA Annotation")
         rrna_gff = run_module2_rrna(
             fasta       = args.fasta,
@@ -1477,7 +1497,7 @@ def main() -> None:
 
     # ── Module 3: tRNA annotation ─────────────────────────────────────────────
     trna_gff = results / f"mod03_tRNA_{prefix}.gff3"
-    if not args.skip_module3:
+    if not _skip(3, "tRNA annotation", trna_gff):
         _banner("Module 3 — tRNA Annotation")
         trna_gff = run_module3_trna(
             fasta   = args.fasta,
@@ -1490,7 +1510,7 @@ def main() -> None:
     # ── Module 4: Integration ─────────────────────────────────────────────────
     counts: dict = {}
     summary_tsv = results / f"mod04_summary_{prefix}.tsv"
-    if not args.skip_integration:
+    if not _skip(4, "integration", summary_tsv):
         _banner("Module 4 — Integration")
         _, counts = run_module4_integration(
             tel_gff, rrna_gff, trna_gff, results, prefix,
@@ -1498,7 +1518,8 @@ def main() -> None:
 
     # ── Module 5: Visualization ───────────────────────────────────────────────
     plot_formats = [f.strip().lstrip(".") for f in args.format.split(",")]
-    if not args.skip_module5:
+    out_plot = results / f"mod05_plot_{prefix}.{plot_formats[0]}"
+    if not _skip(5, "visualization", out_plot):
         _banner("Module 5 — Visualization")
         run_module5_plot(
             fasta         = args.fasta,

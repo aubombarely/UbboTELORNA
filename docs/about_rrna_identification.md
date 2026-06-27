@@ -124,14 +124,11 @@ with nhmmer — masking (Module 1) is reused:
 
 ```bash
 python3 scripts/UbboTELORNA.py \
-    --fasta        genome.fasta \
-    --output       annotation_run/ \
-    --search_tool  cmsearch \
+    --fasta           genome.fasta \
+    --output          annotation_run/ \
+    --search_tool     cmsearch \
     --cmsearch_mxsize 1024 \
-    --skip_module0 \
-    --skip_module1 \
-    --skip_module3 \
-    --skip_integration \
+    --skip_module     0,1,3,4,5 \
     --force
 ```
 

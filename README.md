@@ -151,12 +151,7 @@ comparison of the two tools.
 | Flag | Default | Description |
 |---|---|---|
 | `--threads` | 4 | CPU threads for the rRNA search tool |
-| `--skip_module0` | — | Skip Module 0 (telomere identification) |
-| `--skip_module1` | — | Skip Module 1 (low-complexity masking) |
-| `--skip_module2` | — | Skip Module 2 (rRNA annotation) |
-| `--skip_module3` | — | Skip Module 3 (tRNA annotation) |
-| `--skip_integration` | — | Skip Module 4 (do not write merged GFF3) |
-| `--skip_module5` | — | Skip Module 5 (do not generate visualization figure) |
+| `--skip_module` | — | Comma-separated module numbers to skip: `0`=telomere `1`=masking `2`=rRNA `3`=tRNA `4`=integration `5`=visualization (e.g. `--skip_module 0,1,2`) |
 | `--format` | `pdf` | Plot format(s): `pdf`, `png`, `svg` — comma-separated |
 | `--top_sequences` | `50` | Number of sequences shown in the ideogram |
 | `--sort_sequences` | `length` | Ideogram sequence order: `length` (longest first) or `seqid` (natural Chr1/Chr2/… sort) |
@@ -287,8 +282,7 @@ python3 scripts/UbboTELORNA.py --fasta genome.fasta --output run/ \
 
 # Sort sequences by chromosome name (Chr1, Chr2 … Chr20) rather than size
 python3 scripts/UbboTELORNA.py --fasta genome.fasta --output run/ \
-    --skip_module0 --skip_module1 --skip_module2 --skip_module3 \
-    --skip_integration \
+    --skip_module 0,1,2,3,4 \
     --sort_sequences seqid
 
 # Show more scaffolds (e.g. fragmented assembly)
@@ -439,11 +433,10 @@ python3 scripts/UbboTELORNA.py \
 
 # 11. Regenerate the figure only (annotation modules already done)
 python3 scripts/UbboTELORNA.py \
-    --fasta        genome.fasta \
-    --output       annotation_run/ \
-    --skip_module0 --skip_module1 --skip_module2 \
-    --skip_module3 --skip_integration \
-    --format       png,pdf \
+    --fasta         genome.fasta \
+    --output        annotation_run/ \
+    --skip_module   0,1,2,3,4 \
+    --format        png,pdf \
     --top_sequences 100
 ```
 
@@ -464,7 +457,7 @@ python3 scripts/UbboTELORNA.py \
 python3 scripts/UbboTELORNA.py \
     --fasta        test/test_genome.fasta \
     --output       test_run_offline/ \
-    --skip_module2 \
+    --skip_module  2 \
     --threads 2
 ```
 
