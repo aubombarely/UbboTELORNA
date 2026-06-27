@@ -185,6 +185,29 @@ def _write_fasta(records: list[tuple[str, str]], path: Path,
 _GFF3_HEADER = "##gff-version 3\n"
 
 
+def _gff3_sort_key(line: str) -> tuple:
+    """Natural-sort key for a GFF3 data line: (seqid parts, start).
+
+    Splits the SeqID on digit/non-digit boundaries so that e.g.
+    Chr2 sorts before Chr10 rather than after it.
+    """
+    cols = line.split("\t")
+    seqid = cols[0] if cols else ""
+    start = int(cols[3]) if len(cols) > 3 and cols[3].isdigit() else 0
+    parts = [int(c) if c.isdigit() else c.lower()
+             for c in re.split(r"(\d+)", seqid)]
+    return (parts, start)
+
+
+def _sort_hits(hits: list[dict]) -> list[dict]:
+    """Sort a hit-dict list by (seqname natural, start)."""
+    def key(h):
+        parts = [int(c) if c.isdigit() else c.lower()
+                 for c in re.split(r"(\d+)", h["seqname"])]
+        return (parts, h["start"])
+    return sorted(hits, key=key)
+
+
 def _gff3_record(seqname: str, source: str, feature: str,
                  start: int, end: int, score, strand: str,
                  frame: str, attrs: dict) -> str:
@@ -364,6 +387,7 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
                                  abs_s, abs_e, avg_d, ".", ".", attrs)
                 )
 
+    records.sort(key=_gff3_sort_key)
     with open(out_gff3, "w") as fh:
         fh.write(_GFF3_HEADER)
         fh.write(f"##repeat-unit {repeat_unit}\n")
@@ -610,6 +634,7 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
         hits = _parse_cmsearch_tblout(tblout, evalue)
 
     _log(f"  {search_tool} hits (E ≤ {evalue}): {len(hits)}")
+    hits = _sort_hits(hits)
 
     with open(out_gff3, "w") as fh:
         fh.write(_GFF3_HEADER)
@@ -695,7 +720,7 @@ def run_module3_trna(fasta: Path, workdir: Path, results: Path,
 
     raw_lines = sum(1 for l in open(aragorn_out) if not l.startswith("#") and l.strip())
     _log(f"  ARAGORN output lines: {raw_lines}")
-    hits = _parse_aragorn(aragorn_out)
+    hits = _sort_hits(_parse_aragorn(aragorn_out))
     _log(f"  ARAGORN tRNA hits: {len(hits)}")
 
     with open(out_gff3, "w") as fh:
@@ -728,28 +753,33 @@ def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
     n_rrna = 0
     n_trna = 0
 
+    # Collect all feature lines from each module GFF3, then sort globally
+    # by (SeqID natural, start) so features from all three types are
+    # interleaved by genomic position in the combined output.
+    all_lines: list[str] = []
+    for gff, label in [
+        (tel_gff,  "telomere"),
+        (rrna_gff, "rRNA"),
+        (trna_gff, "tRNA"),
+    ]:
+        if gff is None or not gff.exists():
+            continue
+        lines = [l for l in open(gff) if not l.startswith("#") and l.strip()]
+        all_lines.extend(lines)
+        count = len(lines)
+        if label == "telomere":
+            n_tel = count
+        elif label == "rRNA":
+            n_rrna = count
+        else:
+            n_trna = count
+
+    all_lines.sort(key=_gff3_sort_key)
+
     with open(combined, "w") as out:
         out.write(_GFF3_HEADER)
-        for gff, label, counter_name in [
-            (tel_gff,  "telomere", "n_tel"),
-            (rrna_gff, "rRNA",     "n_rrna"),
-            (trna_gff, "tRNA",     "n_trna"),
-        ]:
-            if gff is None or not gff.exists():
-                continue
-            count = 0
-            with open(gff) as fh:
-                for line in fh:
-                    if line.startswith("#"):
-                        continue
-                    out.write(line)
-                    count += 1
-            if label == "telomere":
-                n_tel = count
-            elif label == "rRNA":
-                n_rrna = count
-            else:
-                n_trna = count
+        for line in all_lines:
+            out.write(line if line.endswith("\n") else line + "\n")
 
     _log(f"  Combined GFF3: {combined.name}")
 
