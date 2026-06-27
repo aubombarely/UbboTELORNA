@@ -824,7 +824,8 @@ def main() -> None:
             try:
                 import pkg_resources  # noqa: F401
             except ModuleNotFoundError:
-                import types as _t, importlib.metadata as _m
+                import types as _t, importlib.metadata as _m, importlib as _il
+                from pathlib import Path as _P
                 _shim = _t.ModuleType("pkg_resources")
                 def _get_dist(name):
                     try:
@@ -833,7 +834,14 @@ def main() -> None:
                         return d
                     except Exception:
                         return None
+                def _resource_filename(pkg, resource):
+                    try:
+                        mod = _il.import_module(pkg)
+                        return str(_P(mod.__file__).parent / resource)
+                    except Exception:
+                        return resource
                 _shim.get_distribution    = _get_dist
+                _shim.resource_filename   = _resource_filename
                 _shim.DistributionNotFound = Exception
                 sys.modules["pkg_resources"] = _shim
 
