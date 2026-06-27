@@ -742,7 +742,7 @@ def _build_parser() -> argparse.ArgumentParser:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    warnings.filterwarnings("ignore", category=FutureWarning, module="pynvml")
+    warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
     _print_quote()
 
     ap   = _build_parser()
