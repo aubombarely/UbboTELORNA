@@ -633,7 +633,7 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
 # ── Module 3: tRNA annotation (ARAGORN) ───────────────────────────────────────
 
 _ARAGORN_RE = re.compile(
-    r"\s+\d+\s+((?:tRNA|tmRNA|mtRNA|pseudo_tRNA)-\S+)\s+"
+    r"\s*\d+\s+((?:tRNA|tmRNA|mtRNA|pseudo_tRNA)-\S+)\s+"
     r"(c?)\[(\d+),(\d+)\](?:\s+\(([^)]+)\))?"
 )
 
@@ -678,21 +678,23 @@ def run_module3_trna(fasta: Path, workdir: Path, results: Path,
     if _checkpoint(out_gff3, "ARAGORN-tRNA", force):
         return out_gff3
 
-    aragorn     = _require_tool("aragorn")
-    search_fa   = _hard_masked(workdir)
-    if not search_fa.exists():
-        search_fa = fasta
-
+    aragorn = _require_tool("aragorn")
+    # Use the original (unmasked) FASTA — ARAGORN is a structural predictor
+    # that uses the tRNA cloverleaf fold, not an alignment-based search.
+    # The hard-masked FASTA (N's replacing repetitive regions) destroys the
+    # structural signal and causes ARAGORN to miss all tRNAs.
     _run([
         aragorn,
         "-t",           # tRNA genes only
         "-gcstd",       # standard genetic code
         "-l",           # treat each sequence as a linear molecule
-        "-w",           # show sequence information
+        "-w",           # write sequence headers as >name (required for parser)
         "-o", str(aragorn_out),
-        str(search_fa),
+        str(fasta.resolve()),
     ])
 
+    raw_lines = sum(1 for l in open(aragorn_out) if not l.startswith("#") and l.strip())
+    _log(f"  ARAGORN output lines: {raw_lines}")
     hits = _parse_aragorn(aragorn_out)
     _log(f"  ARAGORN tRNA hits: {len(hits)}")
 
