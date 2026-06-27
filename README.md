@@ -170,7 +170,7 @@ comparison of the two tools.
 │   ├── mod02_rRNA_{prefix}.gff3            rRNA features (Module 2)
 │   ├── mod03_tRNA_{prefix}.gff3            tRNA features (Module 3)
 │   ├── mod04_annotation_{prefix}.gff3      Combined GFF3 (Module 4)
-│   ├── mod04_summary_{prefix}.tsv          Feature count summary
+│   ├── mod04_summary_{prefix}.tsv          Detailed feature summary (count, length, % genome)
 │   └── {prefix}.run_summary.json           Run metadata and resource usage
 ├── workdir/
 │   ├── masked_soft.fasta                   Soft-masked FASTA (tantan lowercase)
@@ -198,6 +198,33 @@ ID=rRNA_{n};Name=5S_rRNA;model=RF00001;score=142.3;E-value=1.2e-42
 ```
 ID=tRNA_{n};Name=tRNA-Phe(GAA);anticodon=GAA
 ```
+
+### Summary TSV
+
+`results/mod04_summary_{prefix}.tsv` contains one row per subtype plus a
+`TOTAL` row for each feature class.  All GFF3 outputs are sorted by SeqID
+(natural order, so `Chr2 < Chr10`) then by start coordinate.
+
+```
+feature_type    subtype              count    total_length_bp    pct_genome
+telomere        TOTAL                71       710000             0.1014
+telomere        3prime               36       360000             0.0514
+telomere        5prime               35       350000             0.0500
+rRNA            TOTAL                21871    43742000           6.2489
+rRNA            5S_rRNA              10233    1238193            0.1769
+rRNA            5_8S_rRNA            3372     539520             0.0771
+rRNA            SSU_rRNA_eukarya     3177     5890476            0.8415
+rRNA            LSU_rRNA_eukarya     3279     36074311           5.1534
+tRNA            TOTAL                3546     265950             0.0380
+tRNA            tRNA-Ala             312      23400              0.0033
+tRNA            tRNA-Gly             289      21675              0.0031
+...
+```
+
+- `total_length_bp` — sum of (end − start + 1) for all features of that subtype
+- `pct_genome` — `total_length_bp / genome_size × 100` (4 decimal places; `NA` if genome size unavailable)
+- rRNA subtypes are written in biological order (5S → 5.8S → SSU → LSU)
+- tRNA subtypes are sorted by count descending, then alphabetically
 
 ---
 
@@ -228,6 +255,7 @@ Command   : scripts/UbboTELORNA.py --fasta genome.fasta --output annotation_run/
   "date": "2026-06-27 10:22:11",
   "version": "v0.1.0",
   "input_fasta": "/data/apple/genome.fasta",
+  "genome_size_bp": 699868534,
   "kingdom": "euka",
   "telomere_repeat": "TTTAGGG",
   "parameters": {
@@ -235,7 +263,28 @@ Command   : scripts/UbboTELORNA.py --fasta genome.fasta --output annotation_run/
     "telomere_density": 0.5,
     "telomere_min_len": 100,
     "evalue": 1e-05,
-    "threads": 8
+    "search_tool": "nhmmer",
+    "threads": 48
+  },
+  "feature_counts": {
+    "telomere": {
+      "total": 71,
+      "total_length_bp": 710000,
+      "by_end":     { "5prime": 35, "3prime": 36 },
+      "len_by_end": { "5prime": 350000, "3prime": 360000 }
+    },
+    "rRNA": {
+      "total": 21871,
+      "total_length_bp": 43742000,
+      "by_type":    { "5S_rRNA": 10233, "5_8S_rRNA": 3372, "SSU_rRNA_eukarya": 3177, "LSU_rRNA_eukarya": 3279 },
+      "len_by_type": { "5S_rRNA": 1238193, "5_8S_rRNA": 539520, "SSU_rRNA_eukarya": 5890476, "LSU_rRNA_eukarya": 36074311 }
+    },
+    "tRNA": {
+      "total": 3546,
+      "total_length_bp": 265950,
+      "by_type":    { "tRNA-Ala": 312, "tRNA-Gly": 289, "...": "..." },
+      "len_by_type": { "tRNA-Ala": 23400, "tRNA-Gly": 21675, "...": "..." }
+    }
   },
   "resource_usage": {
     "wall_clock_s": 312.4,
