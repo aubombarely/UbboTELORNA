@@ -5,8 +5,10 @@ channels:
   - defaults
 dependencies:
   - python>=3.10
-  - setuptools           # provides pkg_resources (required by codecarbon)
+  - setuptools        # provides pkg_resources
+  - pip
   - infernal          # cmsearch — rRNA annotation (Module 2)
   - aragorn           # tRNA annotation (Module 3)
   - tantan            # low-complexity masking (Module 1)
-  - conda-forge::codecarbon   # carbon footprint tracking
+  - pip:
+    - codecarbon      # carbon footprint tracking (pip build avoids pkg_resources issues)
