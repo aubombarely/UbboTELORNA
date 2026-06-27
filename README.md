@@ -26,13 +26,17 @@ ancient, conserved elements of the eukaryotic genome.
 
 ### Why not barrnap?
 
-`barrnap` wraps `nhmmer` (HMMER3), which fails when a sequence starts with a
+`barrnap` (internally `nhmmer`) fails when a sequence starts with a
 low-complexity pattern such as a telomeric repeat (`ACACAC…`, `TTTAGGG…`).
 UbboTELORNA solves this by:
 
 1. **Identifying telomeres first** (Module 0) — pure-Python k-mer scan, no external dependencies.
 2. **Masking low-complexity regions** (Module 1) — `tantan` soft-mask before any search tool runs.
-3. **Using Infernal `cmsearch`** instead of `nhmmer` — covariance models are intrinsically more robust to sequence composition bias.
+3. **Flexible rRNA search** (Module 2) — `nhmmer` (default, fast, low memory) or Infernal
+   `cmsearch` (higher sensitivity) via `--search_tool`.
+
+See [docs/about_rrna_identification.md](docs/about_rrna_identification.md) for a detailed
+comparison of nhmmer vs cmsearch: speed, memory, sensitivity, and when to use each.
 
 ---
 
@@ -42,7 +46,7 @@ UbboTELORNA solves this by:
 |---|---|---|---|
 | 0 | Telomere identification | Custom k-mer scan | `mod00_telomeres_{prefix}.gff3` |
 | 1 | Low-complexity masking | tantan | `workdir/masked_soft.fasta`, `workdir/masked_hard.fasta` |
-| 2 | rRNA annotation | Infernal cmsearch + Rfam CMs | `mod02_rRNA_{prefix}.gff3` |
+| 2 | rRNA annotation | nhmmer (default) or cmsearch + Rfam profiles | `mod02_rRNA_{prefix}.gff3` |
 | 3 | tRNA annotation | ARAGORN | `mod03_tRNA_{prefix}.gff3` |
 | 4 | Integration | — | `mod04_annotation_{prefix}.gff3`, `mod04_summary_{prefix}.tsv` |
 
@@ -62,9 +66,9 @@ UbboTELORNA solves this by:
 | `archaea` | LSU_rRNA_archaea | RF02540 | 23S archaeal rRNA |
 
 Models are downloaded automatically from `https://rfam.org/` on first use and
-cached in `~/.ubbotelorna/rfam/`.  On **air-gapped HPC nodes**, download them
-once on a machine with internet access and supply the directory with
-`--rfam_dir /path/to/cms/`.
+cached in `~/.ubbotelorna/rfam/` (both `.hmm` and `.cm` files).
+On **air-gapped HPC nodes**, download them once on a machine with internet
+access and supply the directory with `--rfam_dir /path/to/rfam/`.
 
 ---
 
@@ -79,7 +83,8 @@ conda activate ubbotelorna
 |---|---|---|
 | Python ≥ 3.10 | Runtime | included in conda env |
 | `tantan` | Low-complexity masking (Module 1) | `conda install -c bioconda tantan` |
-| `infernal` (`cmsearch`) | rRNA annotation (Module 2) | `conda install -c bioconda infernal` |
+| `hmmer` (`nhmmer`) | rRNA annotation — default (Module 2) | `conda install -c bioconda hmmer` |
+| `infernal` (`cmsearch`) | rRNA annotation — alternative (Module 2) | `conda install -c bioconda infernal` |
 | `aragorn` | tRNA annotation (Module 3) | `conda install -c bioconda aragorn` |
 | `codecarbon` | Carbon footprint tracking (optional) | `conda install -c conda-forge codecarbon` |
 
@@ -126,14 +131,19 @@ UbboTELORNA.py --fasta FASTA --output DIR [options]
 | Flag | Default | Description |
 |---|---|---|
 | `--kingdom` | `euka` | Organism kingdom: `euka`, `bacteria`, or `archaea` |
-| `--evalue` | 1e-5 | E-value threshold for cmsearch |
-| `--rfam_dir` | `~/.ubbotelorna/rfam/` | Directory with pre-downloaded Rfam `.cm` files |
+| `--evalue` | 1e-5 | E-value threshold for rRNA search |
+| `--rfam_dir` | `~/.ubbotelorna/rfam/` | Directory with pre-downloaded Rfam `.hmm`/`.cm` files |
+| `--search_tool` | `nhmmer` | rRNA search tool: `nhmmer` (fast, low memory) or `cmsearch` (higher sensitivity) |
+| `--cmsearch_mxsize` | 512 | Max DP matrix per cmsearch thread (Mb) — only used with `--search_tool cmsearch` |
+
+See [docs/about_rrna_identification.md](docs/about_rrna_identification.md) for a full
+comparison of the two tools.
 
 ### General
 
 | Flag | Default | Description |
 |---|---|---|
-| `--threads` | 4 | CPU threads for cmsearch |
+| `--threads` | 4 | CPU threads for the rRNA search tool |
 | `--skip_module0` | — | Skip Module 0 (telomere identification) |
 | `--skip_module1` | — | Skip Module 1 (low-complexity masking) |
 | `--skip_module2` | — | Skip Module 2 (rRNA annotation) |
@@ -160,7 +170,7 @@ UbboTELORNA.py --fasta FASTA --output DIR [options]
 ├── workdir/
 │   ├── masked_soft.fasta                   Soft-masked FASTA (tantan lowercase)
 │   ├── masked_hard.fasta                   Hard-masked FASTA (N's, used by search tools)
-│   ├── cmsearch_rRNA.tblout                Raw cmsearch tabular output
+│   ├── nhmmer_rRNA.tblout                  Raw nhmmer tabular output (or cmsearch_rRNA.tblout)
 │   └── aragorn.txt                         Raw ARAGORN output
 └── logs/
     ├── Run_UbboTELORNA.log                 Full timestamped run log
@@ -329,8 +339,8 @@ to YuggASMoth's filtering step.
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 **v0.1.0** _(2026-06-27)_ — initial release: telomere k-mer scan, tantan
-masking, Infernal cmsearch rRNA annotation, ARAGORN tRNA annotation, GFF3
-integration.
+masking, nhmmer (default) / cmsearch rRNA annotation, ARAGORN tRNA annotation,
+GFF3 integration.
 
 ---
 
@@ -338,6 +348,7 @@ integration.
 
 | Tool | Reference |
 |---|---|
+| **HMMER3 / nhmmer** | Eddy SR (2011) *PLoS Comput Biol* 7:e1002195 |
 | **Infernal / cmsearch** | Nawrocki EP, Eddy SR (2013) *Bioinformatics* 29:2933–2935 |
 | **Rfam** | Kalvari I et al. (2021) *Nucleic Acids Res* 49:D192–D200 |
 | **ARAGORN** | Laslett D, Canback B (2004) *Nucleic Acids Res* 32:11–16 |
