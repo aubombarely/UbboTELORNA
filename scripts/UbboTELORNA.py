@@ -7,7 +7,7 @@ Annotates three classes of ancient, conserved genomic elements:
   Module 0  Telomere identification  — k-mer density scan at contig ends
   Module 1  Low-complexity masking   — tantan soft-mask (prevents search failures
                                        on telomeric and repetitive sequences)
-  Module 2  rRNA annotation          — Infernal cmsearch + Rfam covariance models
+  Module 2  rRNA annotation          — nhmmer (default) or cmsearch + Rfam profiles
   Module 3  tRNA annotation          — ARAGORN
   Module 4  Integration              — merged GFF3 + summary table
 
@@ -56,6 +56,7 @@ _RFAM_CMS = {
     },
 }
 _RFAM_CM_URL  = "https://rfam.org/family/{acc}/cm"
+_RFAM_HMM_URL = "https://rfam.org/family/{acc}/hmm"
 _DEFAULT_CACHE = Path.home() / ".ubbotelorna" / "rfam"
 
 # ── Telomere repeat defaults ───────────────────────────────────────────────────
@@ -441,6 +442,83 @@ def _ensure_cms(kingdom: str, rfam_dir: Path | None) -> Path:
     return combined
 
 
+def _ensure_hmms(kingdom: str, rfam_dir: Path | None) -> Path:
+    """
+    Download (if needed) and return path to a concatenated .hmm file
+    containing all HMM profiles for the given kingdom.
+    """
+    cache = rfam_dir or _DEFAULT_CACHE
+    cache.mkdir(parents=True, exist_ok=True)
+
+    models   = _RFAM_CMS[kingdom]
+    combined = cache / f"ubbotelorna_{kingdom}.hmm"
+
+    if combined.exists():
+        _log(f"  Using cached Rfam HMMs: {combined}")
+        return combined
+
+    _log(f"  Downloading Rfam HMMs for kingdom '{kingdom}' …")
+    hmm_parts = []
+    for name, acc in models.items():
+        hmm_path = cache / f"{acc}.hmm"
+        if not hmm_path.exists():
+            url = _RFAM_HMM_URL.format(acc=acc)
+            _log(f"    Downloading {acc} ({name}) from {url}")
+            try:
+                urlretrieve(url, hmm_path)
+            except Exception as exc:
+                print(f"ERROR: failed to download {url}: {exc}\n"
+                      f"       Check internet access or provide --rfam_dir with "
+                      f"pre-downloaded .hmm files.", file=sys.stderr)
+                sys.exit(1)
+        hmm_parts.append(hmm_path.read_text())
+
+    combined.write_text("\n".join(hmm_parts))
+    _log(f"  HMMs written to {combined}")
+    return combined
+
+
+def _parse_nhmmer_tblout(tblout: Path, evalue: float) -> list[dict]:
+    """Parse nhmmer --tblout output into a list of hit dicts.
+
+    nhmmer tblout columns (whitespace-separated):
+      0  target name   1  target acc   2  query name   3  query acc
+      4  hmmfrom       5  hmmto        6  alifrom      7  alito
+      8  envfrom       9  envto        10 sq len       11 strand
+      12 E-value       13 score        14 bias         15+ description
+    """
+    hits = []
+    with open(tblout) as fh:
+        for line in fh:
+            if line.startswith("#") or not line.strip():
+                continue
+            cols = line.split()
+            if len(cols) < 15:
+                continue
+            try:
+                hit_evalue = float(cols[12])
+            except ValueError:
+                continue
+            if hit_evalue > evalue:
+                continue
+            start  = int(cols[6])
+            end    = int(cols[7])
+            strand = cols[11]
+            if start > end:
+                start, end = end, start
+            hits.append({
+                "seqname":    cols[0],
+                "model_name": cols[2],
+                "model_acc":  cols[3],
+                "start":      start,
+                "end":        end,
+                "strand":     strand,
+                "score":      float(cols[13]),
+                "evalue":     hit_evalue,
+            })
+    return hits
+
+
 def _parse_cmsearch_tblout(tblout: Path, evalue: float) -> list[dict]:
     """Parse cmsearch --tblout output into a list of hit dicts."""
     hits = []
@@ -478,37 +556,50 @@ def _parse_cmsearch_tblout(tblout: Path, evalue: float) -> list[dict]:
 
 
 def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
-                     rfam_dir: Path | None, mxsize: float,
+                     rfam_dir: Path | None, mxsize: float, search_tool: str,
                      workdir: Path, results: Path,
                      prefix: str, force: bool) -> Path:
-    """Run cmsearch and write rRNA GFF3."""
+    """Run nhmmer (default) or cmsearch and write rRNA GFF3."""
     out_gff3  = results / f"mod02_rRNA_{prefix}.gff3"
-    tblout    = workdir / "cmsearch_rRNA.tblout"
-    cmsearch_out = workdir / "cmsearch_rRNA.out"
+    tblout    = workdir / f"{search_tool}_rRNA.tblout"
 
-    if _checkpoint(out_gff3, "cmsearch-rRNA", force):
+    if _checkpoint(out_gff3, f"{search_tool}-rRNA", force):
         return out_gff3
 
-    cm_file   = _ensure_cms(kingdom, rfam_dir)
     search_fa = _hard_masked(workdir)
     if not search_fa.exists():
         search_fa = fasta   # fall back if masking was skipped
 
-    cmsearch  = _require_tool("cmsearch")
-    _run([
-        cmsearch,
-        "--cpu",    str(threads),
-        "--tblout", str(tblout),
-        "-E",       str(evalue),
-        "--noali",
-        "--rfam",                   # HMM pre-filter: find candidate windows before CM; essential for large genomes
-        "--mxsize", str(mxsize),    # cap DP matrix per thread (Mb); sequences exceeding this are skipped
-        str(cm_file),
-        str(search_fa),
-    ], cwd=workdir)
+    if search_tool == "nhmmer":
+        hmm_file = _ensure_hmms(kingdom, rfam_dir)
+        tool     = _require_tool("nhmmer")
+        _run([
+            tool,
+            "--cpu",    str(threads),
+            "--tblout", str(tblout),
+            "-E",       str(evalue),
+            "--noali",
+            str(hmm_file),
+            str(search_fa.resolve()),
+        ], cwd=workdir)
+        hits = _parse_nhmmer_tblout(tblout, evalue)
+    else:
+        cm_file  = _ensure_cms(kingdom, rfam_dir)
+        tool     = _require_tool("cmsearch")
+        _run([
+            tool,
+            "--cpu",    str(threads),
+            "--tblout", str(tblout),
+            "-E",       str(evalue),
+            "--noali",
+            "--rfam",                   # HMM pre-filter; essential for large genomes
+            "--mxsize", str(mxsize),    # cap DP matrix per thread (Mb)
+            str(cm_file),
+            str(search_fa.resolve()),
+        ], cwd=workdir)
+        hits = _parse_cmsearch_tblout(tblout, evalue)
 
-    hits = _parse_cmsearch_tblout(tblout, evalue)
-    _log(f"  cmsearch hits (E ≤ {evalue}): {len(hits)}")
+    _log(f"  {search_tool} hits (E ≤ {evalue}): {len(hits)}")
 
     with open(out_gff3, "w") as fh:
         fh.write(_GFF3_HEADER)
@@ -674,7 +765,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Modules:\n"
             "  0  Telomere identification  (k-mer scan at contig ends)\n"
             "  1  Low-complexity masking   (tantan)\n"
-            "  2  rRNA annotation          (Infernal cmsearch + Rfam CMs)\n"
+            "  2  rRNA annotation          (nhmmer [default] or cmsearch + Rfam profiles)\n"
             "  3  tRNA annotation          (ARAGORN)\n"
             "  4  Integration              (merged GFF3 + summary table)\n"
         ),
@@ -707,11 +798,15 @@ def _build_parser() -> argparse.ArgumentParser:
     rrna.add_argument("--rfam_dir", type=Path, default=None,
                       help=f"Directory with pre-downloaded Rfam .cm files "
                            f"(default: auto-download to {_DEFAULT_CACHE})")
+    rrna.add_argument("--search_tool", choices=["nhmmer", "cmsearch"],
+                      default="nhmmer",
+                      help="rRNA search tool: nhmmer (default, faster, lower "
+                           "memory, uses Rfam HMM profiles) or cmsearch "
+                           "(higher sensitivity, uses Rfam covariance models)")
     rrna.add_argument("--cmsearch_mxsize", type=float, default=512.0,
                       help="Max DP matrix size per cmsearch thread in Mb — "
-                           "sequences exceeding this are skipped with a warning "
-                           "(default: 512). Lower if RAM is limited; raise if "
-                           "large chromosomes are missed.")
+                           "only used with --search_tool cmsearch "
+                           "(default: 512)")
 
     gen = ap.add_argument_group("General")
     gen.add_argument("--threads", type=int, default=4,
@@ -780,6 +875,7 @@ def main() -> None:
     _log(f"  Input FASTA : {args.fasta}")
     _log(f"  Output dir  : {run_dir}")
     _log(f"  Kingdom     : {args.kingdom}")
+    _log(f"  rRNA tool   : {args.search_tool}")
     _log(f"  Threads     : {args.threads}")
 
     if args.force:
@@ -799,7 +895,7 @@ def main() -> None:
         if not args.skip_module1:
             _log("    [1] Low-complexity masking   →  workdir/masked_soft.fasta")
         if not args.skip_module2:
-            _log("    [2] rRNA annotation          →  results/mod02_rRNA_*.gff3")
+            _log(f"    [2] rRNA annotation ({args.search_tool})  →  results/mod02_rRNA_*.gff3")
         if not args.skip_module3:
             _log("    [3] tRNA annotation          →  results/mod03_tRNA_*.gff3")
         if not args.skip_integration:
@@ -888,16 +984,17 @@ def main() -> None:
     if not args.skip_module2:
         _banner("Module 2 — rRNA Annotation")
         rrna_gff = run_module2_rrna(
-            fasta    = args.fasta,
-            kingdom  = args.kingdom,
-            threads  = args.threads,
-            evalue   = args.evalue,
-            rfam_dir = args.rfam_dir,
-            mxsize   = args.cmsearch_mxsize,
-            workdir  = workdir,
-            results  = results,
-            prefix   = prefix,
-            force    = args.force,
+            fasta       = args.fasta,
+            kingdom     = args.kingdom,
+            threads     = args.threads,
+            evalue      = args.evalue,
+            rfam_dir    = args.rfam_dir,
+            mxsize      = args.cmsearch_mxsize,
+            search_tool = args.search_tool,
+            workdir     = workdir,
+            results     = results,
+            prefix      = prefix,
+            force       = args.force,
         )
 
     # ── Module 3: tRNA annotation ─────────────────────────────────────────────

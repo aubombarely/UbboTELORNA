@@ -7,7 +7,8 @@ dependencies:
   - python>=3.10
   - setuptools        # provides pkg_resources
   - pip
-  - infernal          # cmsearch — rRNA annotation (Module 2)
+  - hmmer             # nhmmer — rRNA annotation (Module 2, default)
+  - infernal          # cmsearch — rRNA annotation (Module 2, --search_tool cmsearch)
   - aragorn           # tRNA annotation (Module 3)
   - tantan            # low-complexity masking (Module 1)
   - pip:
