@@ -1432,7 +1432,7 @@ def main() -> None:
             _log(f"  codecarbon failed to start — carbon tracking skipped ({e})")
 
     # ── Module 0: Telomere identification ─────────────────────────────────────
-    tel_gff    = None
+    tel_gff     = results / f"mod00_telomeres_{prefix}.gff3"
     repeat_used = None
     if not args.skip_module0:
         _banner("Module 0 — Telomere Identification")
@@ -1458,7 +1458,7 @@ def main() -> None:
         )
 
     # ── Module 2: rRNA annotation ─────────────────────────────────────────────
-    rrna_gff = None
+    rrna_gff = results / f"mod02_rRNA_{prefix}.gff3"
     if not args.skip_module2:
         _banner("Module 2 — rRNA Annotation")
         rrna_gff = run_module2_rrna(
@@ -1476,7 +1476,7 @@ def main() -> None:
         )
 
     # ── Module 3: tRNA annotation ─────────────────────────────────────────────
-    trna_gff = None
+    trna_gff = results / f"mod03_tRNA_{prefix}.gff3"
     if not args.skip_module3:
         _banner("Module 3 — tRNA Annotation")
         trna_gff = run_module3_trna(
