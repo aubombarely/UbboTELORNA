@@ -151,6 +151,16 @@ def _validate_inputs(pairs: list) -> None:
 
 # ── FASTA utilities ───────────────────────────────────────────────────────────
 
+def _fasta_total_length(fasta: Path) -> int:
+    """Count total nucleotides in a FASTA file without loading sequences."""
+    total = 0
+    with open(fasta) as fh:
+        for line in fh:
+            if not line.startswith(">"):
+                total += len(line.rstrip())
+    return total
+
+
 def _read_fasta(path: Path) -> list[tuple[str, str]]:
     """Return list of (header, sequence) from a FASTA file."""
     records = []
@@ -183,6 +193,15 @@ def _write_fasta(records: list[tuple[str, str]], path: Path,
 # ── GFF3 utilities ────────────────────────────────────────────────────────────
 
 _GFF3_HEADER = "##gff-version 3\n"
+
+
+def _gff3_length(line: str) -> int:
+    """Return feature length (end - start + 1) from a GFF3 data line."""
+    cols = line.split("\t")
+    try:
+        return int(cols[4]) - int(cols[3]) + 1
+    except (IndexError, ValueError):
+        return 0
 
 
 def _gff3_name(line: str) -> str:
@@ -757,7 +776,8 @@ def run_module3_trna(fasta: Path, workdir: Path, results: Path,
 
 def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
                              trna_gff: Path | None,
-                             results: Path, prefix: str) -> tuple[Path, dict]:
+                             results: Path, prefix: str,
+                             genome_size: int = 0) -> tuple[Path, dict]:
     """Merge GFF3 files, sort by position, and write a detailed summary TSV.
 
     Returns (combined_gff3_path, counts_dict) where counts_dict has keys
@@ -795,54 +815,79 @@ def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
 
     _log(f"  Combined GFF3: {combined.name}")
 
-    # ── Count subtypes ─────────────────────────────────────────────────────────
+    # ── Count subtypes and accumulate lengths ──────────────────────────────────
     n_tel  = len(tel_lines)
     n_rrna = len(rrna_lines)
     n_trna = len(trna_lines)
 
-    tel_by_end   = Counter()   # 5prime / 3prime
-    rrna_by_type = Counter()   # 5S_rRNA, 5_8S_rRNA, SSU_rRNA_eukarya, …
-    trna_by_type = Counter()   # tRNA-Phe, tRNA-Ala, …
+    tel_by_end    = Counter()   # subtype  → count
+    rrna_by_type  = Counter()
+    trna_by_type  = Counter()
+    tel_len_by_end   = Counter()  # subtype → total bp
+    rrna_len_by_type = Counter()
+    trna_len_by_type = Counter()
+    tel_len = rrna_len = trna_len = 0
 
     for line in tel_lines:
-        name = _gff3_name(line)          # "telomere_5prime" or "telomere_3prime"
+        name = _gff3_name(line)
         end  = name.replace("telomere_", "") if name else "unknown"
-        tel_by_end[end] += 1
+        bp   = _gff3_length(line)
+        tel_by_end[end]    += 1
+        tel_len_by_end[end] += bp
+        tel_len += bp
 
     for line in rrna_lines:
-        rrna_by_type[_gff3_name(line) or "unknown"] += 1
+        rtype = _gff3_name(line) or "unknown"
+        bp    = _gff3_length(line)
+        rrna_by_type[rtype]   += 1
+        rrna_len_by_type[rtype] += bp
+        rrna_len += bp
 
     for line in trna_lines:
-        trna_by_type[_gff3_name(line) or "unknown"] += 1
+        ttype = _gff3_name(line) or "unknown"
+        bp    = _gff3_length(line)
+        trna_by_type[ttype]   += 1
+        trna_len_by_type[ttype] += bp
+        trna_len += bp
+
+    def _pct(bp: int) -> str:
+        if genome_size > 0:
+            return f"{bp / genome_size * 100:.4f}"
+        return "NA"
 
     # ── Write detailed summary TSV ─────────────────────────────────────────────
+    _RRNA_ORDER = [
+        "5S_rRNA", "5_8S_rRNA",
+        "SSU_rRNA_eukarya", "SSU_rRNA_bacteria", "SSU_rRNA_archaea",
+        "LSU_rRNA_eukarya", "LSU_rRNA_bacteria", "LSU_rRNA_archaea",
+    ]
+
     with open(summary, "w") as fh:
-        fh.write("feature_type\tsubtype\tcount\n")
+        fh.write("feature_type\tsubtype\tcount\ttotal_length_bp\tpct_genome\n")
 
         # Telomeres
-        fh.write(f"telomere\tTOTAL\t{n_tel}\n")
+        fh.write(f"telomere\tTOTAL\t{n_tel}\t{tel_len}\t{_pct(tel_len)}\n")
         for end in sorted(tel_by_end):
-            fh.write(f"telomere\t{end}\t{tel_by_end[end]}\n")
+            bp = tel_len_by_end[end]
+            fh.write(f"telomere\t{end}\t{tel_by_end[end]}\t{bp}\t{_pct(bp)}\n")
 
-        # rRNA — preserve biological order (small → large subunit)
-        _RRNA_ORDER = [
-            "5S_rRNA", "5_8S_rRNA",
-            "SSU_rRNA_eukarya", "SSU_rRNA_bacteria", "SSU_rRNA_archaea",
-            "LSU_rRNA_eukarya", "LSU_rRNA_bacteria", "LSU_rRNA_archaea",
-        ]
-        fh.write(f"rRNA\tTOTAL\t{n_rrna}\n")
+        # rRNA — biological order (small → large subunit)
+        fh.write(f"rRNA\tTOTAL\t{n_rrna}\t{rrna_len}\t{_pct(rrna_len)}\n")
         for rtype in _RRNA_ORDER:
             if rtype in rrna_by_type:
-                fh.write(f"rRNA\t{rtype}\t{rrna_by_type[rtype]}\n")
-        for rtype in sorted(rrna_by_type):   # any extra models not in the list
+                bp = rrna_len_by_type[rtype]
+                fh.write(f"rRNA\t{rtype}\t{rrna_by_type[rtype]}\t{bp}\t{_pct(bp)}\n")
+        for rtype in sorted(rrna_by_type):
             if rtype not in _RRNA_ORDER:
-                fh.write(f"rRNA\t{rtype}\t{rrna_by_type[rtype]}\n")
+                bp = rrna_len_by_type[rtype]
+                fh.write(f"rRNA\t{rtype}\t{rrna_by_type[rtype]}\t{bp}\t{_pct(bp)}\n")
 
         # tRNA — sorted by count descending, then alphabetically
-        fh.write(f"tRNA\tTOTAL\t{n_trna}\n")
+        fh.write(f"tRNA\tTOTAL\t{n_trna}\t{trna_len}\t{_pct(trna_len)}\n")
         for ttype, cnt in sorted(trna_by_type.items(),
                                   key=lambda x: (-x[1], x[0])):
-            fh.write(f"tRNA\t{ttype}\t{cnt}\n")
+            bp = trna_len_by_type[ttype]
+            fh.write(f"tRNA\t{ttype}\t{cnt}\t{bp}\t{_pct(bp)}\n")
 
     _log(f"  Summary TSV: {summary.name}")
 
@@ -859,12 +904,18 @@ def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
              "  ".join(f"{t}:{c}" for t, c in top))
 
     counts = {
-        "n_tel":        n_tel,
-        "n_rrna":       n_rrna,
-        "n_trna":       n_trna,
-        "tel_by_end":   dict(tel_by_end),
-        "rrna_by_type": dict(rrna_by_type),
-        "trna_by_type": dict(trna_by_type),
+        "n_tel":             n_tel,
+        "n_rrna":            n_rrna,
+        "n_trna":            n_trna,
+        "tel_len":           tel_len,
+        "rrna_len":          rrna_len,
+        "trna_len":          trna_len,
+        "tel_by_end":        dict(tel_by_end),
+        "tel_len_by_end":    dict(tel_len_by_end),
+        "rrna_by_type":      dict(rrna_by_type),
+        "rrna_len_by_type":  dict(rrna_len_by_type),
+        "trna_by_type":      dict(trna_by_type),
+        "trna_len_by_type":  dict(trna_len_by_type),
     }
     return combined, counts
 
@@ -991,6 +1042,8 @@ def main() -> None:
     _log(f"  Kingdom     : {args.kingdom}")
     _log(f"  rRNA tool   : {args.search_tool}")
     _log(f"  Threads     : {args.threads}")
+    genome_size = _fasta_total_length(args.fasta)
+    _log(f"  Genome size : {genome_size:,} bp")
 
     if args.force:
         _log("  --force set: all steps will rerun regardless of existing outputs")
@@ -1128,7 +1181,8 @@ def main() -> None:
     if not args.skip_integration:
         _banner("Module 4 — Integration")
         _, counts = run_module4_integration(
-            tel_gff, rrna_gff, trna_gff, results, prefix)
+            tel_gff, rrna_gff, trna_gff, results, prefix,
+            genome_size=genome_size)
 
     # ── Resource usage & run summary ──────────────────────────────────────────
     elapsed_s   = time.monotonic() - t_start
@@ -1148,6 +1202,7 @@ def main() -> None:
         "date":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "version": VERSION,
         "input_fasta":    str(args.fasta),
+        "genome_size_bp": genome_size,
         "kingdom":        args.kingdom,
         "telomere_repeat": repeat_used,
         "parameters": {
@@ -1160,16 +1215,22 @@ def main() -> None:
         },
         "feature_counts": {
             "telomere": {
-                "total":    counts.get("n_tel",  0),
-                "by_end":   counts.get("tel_by_end",   {}),
+                "total":          counts.get("n_tel",  0),
+                "total_length_bp": counts.get("tel_len", 0),
+                "by_end":         counts.get("tel_by_end",     {}),
+                "len_by_end":     counts.get("tel_len_by_end", {}),
             },
             "rRNA": {
-                "total":    counts.get("n_rrna", 0),
-                "by_type":  counts.get("rrna_by_type", {}),
+                "total":           counts.get("n_rrna", 0),
+                "total_length_bp": counts.get("rrna_len", 0),
+                "by_type":         counts.get("rrna_by_type",     {}),
+                "len_by_type":     counts.get("rrna_len_by_type", {}),
             },
             "tRNA": {
-                "total":    counts.get("n_trna", 0),
-                "by_type":  counts.get("trna_by_type", {}),
+                "total":           counts.get("n_trna", 0),
+                "total_length_bp": counts.get("trna_len", 0),
+                "by_type":         counts.get("trna_by_type",     {}),
+                "len_by_type":     counts.get("trna_len_by_type", {}),
             },
         } if counts else {},
         "resource_usage": {
