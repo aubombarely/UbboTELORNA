@@ -71,7 +71,7 @@ once on a machine with internet access and supply the directory with
 ## Requirements
 
 ```bash
-conda create -n ubbotelorna -f envs/UbboTELORNA.yaml
+conda env create -f envs/UbboTELORNA.yaml
 conda activate ubbotelorna
 ```
 
