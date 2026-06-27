@@ -10,6 +10,7 @@ Annotates three classes of ancient, conserved genomic elements:
   Module 2  rRNA annotation          — nhmmer (default) or cmsearch + Rfam profiles
   Module 3  tRNA annotation          — ARAGORN
   Module 4  Integration              — merged GFF3 + summary table
+  Module 5  Visualization            — ideogram, subtype bars, composition donut
 
 Named after Ubbo-Sathla (Clark Ashton Smith / H.P. Lovecraft Mythos), the
 primordial source of all terrestrial life — mirroring telomeres, rDNA, and
@@ -32,6 +33,22 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from urllib.request import urlretrieve
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.ticker as mticker
+from matplotlib.gridspec import GridSpec
+
+matplotlib.rcParams.update({
+    "font.size":        10,
+    "axes.titlesize":   11,
+    "axes.labelsize":   10,
+    "figure.dpi":       150,
+    "savefig.dpi":      150,
+    "figure.facecolor": "white",
+})
 
 VERSION = "v0.1.0"
 
@@ -159,6 +176,67 @@ def _fasta_total_length(fasta: Path) -> int:
             if not line.startswith(">"):
                 total += len(line.rstrip())
     return total
+
+
+def _fasta_seq_lengths(fasta: Path) -> dict:
+    """Return {seq_name: length} preserving FASTA order."""
+    lengths: dict = {}
+    name = None
+    bp   = 0
+    with open(fasta) as fh:
+        for line in fh:
+            line = line.rstrip()
+            if line.startswith(">"):
+                if name is not None:
+                    lengths[name] = bp
+                name = line[1:].split()[0]
+                bp   = 0
+            else:
+                bp += len(line)
+    if name is not None:
+        lengths[name] = bp
+    return lengths
+
+
+def _parse_gff3_positions(gff: Path | None) -> dict:
+    """Return {seq_name: [(start, end), ...]} from a GFF3, skipping comment lines."""
+    groups: dict = {}
+    if gff is None or not gff.exists():
+        return groups
+    with open(gff) as fh:
+        for line in fh:
+            if line.startswith("#") or not line.strip():
+                continue
+            cols = line.split("\t")
+            if len(cols) < 5:
+                continue
+            try:
+                seqn = cols[0]
+                groups.setdefault(seqn, []).append((int(cols[3]), int(cols[4])))
+            except ValueError:
+                continue
+    return groups
+
+
+def _parse_summary_tsv(tsv: Path | None) -> dict:
+    """Return {feature_type: {subtype: (count, length_bp)}} from summary TSV."""
+    data: dict = {}
+    if tsv is None or not tsv.exists():
+        return data
+    with open(tsv) as fh:
+        fh.readline()   # skip header
+        for line in fh:
+            cols = line.strip().split("\t")
+            if len(cols) < 4:
+                continue
+            ftype, subtype = cols[0], cols[1]
+            try:
+                count  = int(cols[2])
+                length = int(cols[3])
+            except ValueError:
+                continue
+            data.setdefault(ftype, {})[subtype] = (count, length)
+    return data
 
 
 def _read_fasta(path: Path) -> list[tuple[str, str]]:
@@ -920,6 +998,203 @@ def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
     return combined, counts
 
 
+# ── Module 5: Visualization ───────────────────────────────────────────────────
+
+_C_TEL   = "#F5A623"   # amber  — telomere
+_C_RRNA  = "#4C9BE8"   # blue   — rRNA
+_C_TRNA  = "#E8604C"   # red    — tRNA
+_C_OTHER = "#888888"   # grey   — uncharacterised / sequence bar
+
+_RRNA_ORDER = [
+    "5S_rRNA", "5_8S_rRNA",
+    "SSU_rRNA_eukarya", "SSU_rRNA_bacteria", "SSU_rRNA_archaea",
+    "LSU_rRNA_eukarya", "LSU_rRNA_bacteria", "LSU_rRNA_archaea",
+]
+
+
+def run_module5_plot(fasta: Path,
+                     tel_gff: Path | None, rrna_gff: Path | None,
+                     trna_gff: Path | None, summary_tsv: Path | None,
+                     genome_size: int, results: Path, prefix: str,
+                     plot_formats: list, top_sequences: int,
+                     force: bool) -> None:
+    """Generate 3-panel figure: ideogram, subtype bars, composition donut."""
+
+    out_base  = results / f"mod05_plot_{prefix}"
+    out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
+    if _checkpoint(out_paths[0], "visualization", force):
+        return
+
+    # ── Load data ──────────────────────────────────────────────────────────────
+    seq_lengths = _fasta_seq_lengths(fasta)
+    tel_pos     = _parse_gff3_positions(tel_gff)
+    rrna_pos    = _parse_gff3_positions(rrna_gff)
+    trna_pos    = _parse_gff3_positions(trna_gff)
+    summ        = _parse_summary_tsv(summary_tsv)
+
+    # Top N sequences by length, descending
+    top_seqs = sorted(seq_lengths.items(), key=lambda x: -x[1])[:top_sequences]
+    if not top_seqs:
+        _log("  [Module 5] No sequences found — skipping plot")
+        return
+
+    max_len = top_seqs[0][1]
+    n_seqs  = len(top_seqs)
+    _log(f"  Plotting top {n_seqs} sequences (longest: {max_len:,} bp)")
+
+    # ── Figure layout ──────────────────────────────────────────────────────────
+    ideo_h = max(4, min(n_seqs * 0.28, 14))   # scale height with seq count
+    fig    = plt.figure(figsize=(18, ideo_h + 5))
+    gs     = GridSpec(2, 3, figure=fig,
+                      height_ratios=[ideo_h, 4.5],
+                      hspace=0.45, wspace=0.38)
+    ax_ideo  = fig.add_subplot(gs[0, :])
+    ax_rrna  = fig.add_subplot(gs[1, 0])
+    ax_trna  = fig.add_subplot(gs[1, 1])
+    ax_donut = fig.add_subplot(gs[1, 2])
+
+    # ── Panel 1: Genome ideogram ───────────────────────────────────────────────
+    bar_h   = 0.65
+    min_vis = max_len * 0.002   # minimum visible width (0.2 % of longest seq)
+
+    for i, (name, slen) in enumerate(top_seqs):
+        y = n_seqs - i - 1
+
+        # Sequence bar (grey background)
+        ax_ideo.broken_barh([(0, slen)], (y - bar_h / 2, bar_h),
+                            facecolors=_C_OTHER, alpha=0.18, linewidth=0)
+
+        # rRNA — draw first (bottom layer), alpha blending creates density effect
+        segs = [(s - 1, max(e - s + 1, min_vis)) for s, e in rrna_pos.get(name, [])]
+        if segs:
+            ax_ideo.broken_barh(segs, (y - bar_h / 2, bar_h),
+                                facecolors=_C_RRNA, alpha=0.45, linewidth=0)
+
+        # tRNA
+        segs = [(s - 1, max(e - s + 1, min_vis)) for s, e in trna_pos.get(name, [])]
+        if segs:
+            ax_ideo.broken_barh(segs, (y - bar_h / 2, bar_h),
+                                facecolors=_C_TRNA, alpha=0.65, linewidth=0)
+
+        # Telomeres — top layer, fully opaque, slightly taller
+        segs = [(s - 1, max(e - s + 1, min_vis * 2)) for s, e in tel_pos.get(name, [])]
+        if segs:
+            ax_ideo.broken_barh(segs, (y - bar_h / 2 - 0.05, bar_h + 0.1),
+                                facecolors=_C_TEL, alpha=1.0, linewidth=0)
+
+    ax_ideo.set_ylim(-0.8, n_seqs - 0.2)
+    ax_ideo.set_yticks(range(n_seqs))
+    ax_ideo.set_yticklabels([n for n, _ in reversed(top_seqs)], fontsize=8)
+    ax_ideo.set_xlim(0, max_len * 1.01)
+    ax_ideo.xaxis.set_major_formatter(
+        mticker.FuncFormatter(lambda x, _: f"{x / 1e6:.0f} Mb"))
+    ax_ideo.set_xlabel("Genomic position")
+    title_suffix = f"top {n_seqs} sequences" if n_seqs < len(seq_lengths) \
+                   else f"{n_seqs} sequences"
+    ax_ideo.set_title(f"{prefix}  —  genome annotation overview  ({title_suffix})",
+                      fontsize=11, pad=8)
+    ax_ideo.spines[["top", "right", "left"]].set_visible(False)
+    ax_ideo.tick_params(left=False)
+
+    legend_patches = [
+        mpatches.Patch(color=_C_TEL,  label="Telomere"),
+        mpatches.Patch(color=_C_RRNA, alpha=0.45, label="rRNA"),
+        mpatches.Patch(color=_C_TRNA, alpha=0.65, label="tRNA"),
+    ]
+    ax_ideo.legend(handles=legend_patches, loc="upper right",
+                   frameon=False, fontsize=9)
+
+    # ── Panel 2: rRNA subtype bars ─────────────────────────────────────────────
+    rrna_data = summ.get("rRNA", {})
+    rrna_sub  = [(rt, rrna_data[rt][0]) for rt in _RRNA_ORDER if rt in rrna_data]
+    if not rrna_sub:   # fallback: any subtypes not in the standard list
+        rrna_sub = sorted([(k, v[0]) for k, v in rrna_data.items() if k != "TOTAL"],
+                           key=lambda x: -x[1])
+
+    if rrna_sub:
+        lbls, vals = zip(*rrna_sub)
+        yp = list(range(len(lbls)))
+        ax_rrna.barh(yp, vals, color=_C_RRNA, linewidth=0)
+        ax_rrna.set_yticks(yp)
+        ax_rrna.set_yticklabels(lbls, fontsize=9)
+        ax_rrna.set_xlabel("Count")
+        ax_rrna.xaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+        for j, v in enumerate(vals):
+            ax_rrna.text(v + max(vals) * 0.01, j, f"{v:,}",
+                         va="center", fontsize=8)
+        ax_rrna.set_xlim(right=max(vals) * 1.18)
+    else:
+        ax_rrna.text(0.5, 0.5, "No rRNA data", ha="center", va="center",
+                     transform=ax_rrna.transAxes, color=_C_OTHER)
+    ax_rrna.set_title("rRNA subtypes")
+    ax_rrna.spines[["top", "right"]].set_visible(False)
+
+    # ── Panel 3: tRNA type bars (top 20) ──────────────────────────────────────
+    trna_data = summ.get("tRNA", {})
+    trna_sub  = sorted([(k, v[0]) for k, v in trna_data.items() if k != "TOTAL"],
+                        key=lambda x: (-x[1], x[0]))[:20]
+
+    if trna_sub:
+        lbls, vals = zip(*trna_sub)
+        yp = list(range(len(lbls)))
+        ax_trna.barh(yp, vals, color=_C_TRNA, linewidth=0)
+        ax_trna.set_yticks(yp)
+        ax_trna.set_yticklabels(lbls, fontsize=9)
+        ax_trna.set_xlabel("Count")
+        ax_trna.xaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+        for j, v in enumerate(vals):
+            ax_trna.text(v + max(vals) * 0.01, j, f"{v:,}",
+                         va="center", fontsize=8)
+        ax_trna.set_xlim(right=max(vals) * 1.18)
+    else:
+        ax_trna.text(0.5, 0.5, "No tRNA data", ha="center", va="center",
+                     transform=ax_trna.transAxes, color=_C_OTHER)
+    ax_trna.set_title("tRNA types (top 20)")
+    ax_trna.spines[["top", "right"]].set_visible(False)
+
+    # ── Panel 4: Genome composition donut ─────────────────────────────────────
+    tel_bp   = summ.get("telomere", {}).get("TOTAL", (0, 0))[1]
+    rrna_bp  = summ.get("rRNA",     {}).get("TOTAL", (0, 0))[1]
+    trna_bp  = summ.get("tRNA",     {}).get("TOTAL", (0, 0))[1]
+    other_bp = max(0, genome_size - tel_bp - rrna_bp - trna_bp)
+
+    slices = [(v, l, c) for v, l, c in [
+        (tel_bp,   "Telomere", _C_TEL),
+        (rrna_bp,  "rRNA",     _C_RRNA),
+        (trna_bp,  "tRNA",     _C_TRNA),
+        (other_bp, "Other",    _C_OTHER),
+    ] if v > 0]
+
+    if slices and genome_size > 0:
+        vals, lbls, cols = zip(*slices)
+        wedges, _ = ax_donut.pie(
+            vals, colors=cols,
+            wedgeprops=dict(width=0.45, edgecolor="white", linewidth=1.5),
+            startangle=90,
+        )
+        ax_donut.text(0, 0, f"{genome_size / 1e6:.0f} Mb",
+                      ha="center", va="center", fontsize=10, fontweight="bold")
+        ax_donut.legend(
+            wedges,
+            [f"{l}  {v / genome_size * 100:.3f}%" for v, l in zip(vals, lbls)],
+            loc="lower center", bbox_to_anchor=(0.5, -0.18),
+            frameon=False, fontsize=8, ncol=2,
+        )
+    else:
+        ax_donut.text(0.5, 0.5, "No data", ha="center", va="center",
+                      transform=ax_donut.transAxes, color=_C_OTHER)
+    ax_donut.set_title("Genome composition")
+
+    # ── Save ───────────────────────────────────────────────────────────────────
+    for fmt in plot_formats:
+        out_path = out_base.with_suffix(f".{fmt}")
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        _log(f"  Plot saved: {out_path.name}")
+    plt.close(fig)
+
+
 # ── Argument parser ───────────────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -986,6 +1261,14 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Skip Module 3 — tRNA annotation")
     gen.add_argument("--skip_integration", action="store_true",
                      help="Skip Module 4 — do not produce merged GFF3")
+    gen.add_argument("--skip_module5", action="store_true",
+                     help="Skip Module 5 — do not produce visualization figure")
+    gen.add_argument("--format", default="pdf",
+                     help="Plot format(s): pdf, png, svg — comma-separated "
+                          "(default: pdf)")
+    gen.add_argument("--top_sequences", type=int, default=50,
+                     help="Number of sequences to show in the ideogram, "
+                          "sorted by length descending (default: 50)")
     gen.add_argument("--force", action="store_true",
                      help="Rerun all steps even if outputs already exist")
     gen.add_argument("--dry_run", action="store_true",
@@ -1067,6 +1350,8 @@ def main() -> None:
             _log("    [3] tRNA annotation          →  results/mod03_tRNA_*.gff3")
         if not args.skip_integration:
             _log("    [4] Integration              →  results/mod04_annotation_*.gff3")
+        if not args.skip_module5:
+            _log(f"    [5] Visualization            →  results/mod05_plot_*.{args.format.split(',')[0].strip()}")
         _log("  Exiting (--dry_run).")
         if _LOG_FH:
             _LOG_FH.close()
@@ -1178,11 +1463,31 @@ def main() -> None:
 
     # ── Module 4: Integration ─────────────────────────────────────────────────
     counts: dict = {}
+    summary_tsv: Path | None = None
     if not args.skip_integration:
         _banner("Module 4 — Integration")
         _, counts = run_module4_integration(
             tel_gff, rrna_gff, trna_gff, results, prefix,
             genome_size=genome_size)
+        summary_tsv = results / f"mod04_summary_{prefix}.tsv"
+
+    # ── Module 5: Visualization ───────────────────────────────────────────────
+    plot_formats = [f.strip().lstrip(".") for f in args.format.split(",")]
+    if not args.skip_module5:
+        _banner("Module 5 — Visualization")
+        run_module5_plot(
+            fasta         = args.fasta,
+            tel_gff       = tel_gff,
+            rrna_gff      = rrna_gff,
+            trna_gff      = trna_gff,
+            summary_tsv   = summary_tsv,
+            genome_size   = genome_size,
+            results       = results,
+            prefix        = prefix,
+            plot_formats  = plot_formats,
+            top_sequences = args.top_sequences,
+            force         = args.force,
+        )
 
     # ── Resource usage & run summary ──────────────────────────────────────────
     elapsed_s   = time.monotonic() - t_start

@@ -11,5 +11,6 @@ dependencies:
   - infernal          # cmsearch — rRNA annotation (Module 2, --search_tool cmsearch)
   - aragorn           # tRNA annotation (Module 3)
   - tantan            # low-complexity masking (Module 1)
+  - matplotlib        # visualization (Module 5)
   - pip:
     - codecarbon      # carbon footprint tracking (pip build avoids pkg_resources issues)

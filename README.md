@@ -49,6 +49,7 @@ comparison of nhmmer vs cmsearch: speed, memory, sensitivity, and when to use ea
 | 2 | rRNA annotation | nhmmer (default) or cmsearch + Rfam profiles | `mod02_rRNA_{prefix}.gff3` |
 | 3 | tRNA annotation | ARAGORN | `mod03_tRNA_{prefix}.gff3` |
 | 4 | Integration | — | `mod04_annotation_{prefix}.gff3`, `mod04_summary_{prefix}.tsv` |
+| 5 | Visualization | matplotlib | `mod05_plot_{prefix}.{pdf\|png\|svg}` |
 
 ### Rfam models used
 
@@ -91,6 +92,7 @@ conda activate ubbotelorna
 | `hmmer` (`nhmmer`) | rRNA annotation — default (Module 2) | `conda install -c bioconda hmmer` |
 | `infernal` (`cmsearch`) | rRNA annotation — alternative (Module 2) | `conda install -c bioconda infernal` |
 | `aragorn` | tRNA annotation (Module 3) | `conda install -c bioconda aragorn` |
+| `matplotlib` | Visualization (Module 5) | `conda install -c conda-forge matplotlib` |
 | `codecarbon` | Carbon footprint tracking (optional) | `conda install -c conda-forge codecarbon` |
 
 ---
@@ -154,6 +156,9 @@ comparison of the two tools.
 | `--skip_module2` | — | Skip Module 2 (rRNA annotation) |
 | `--skip_module3` | — | Skip Module 3 (tRNA annotation) |
 | `--skip_integration` | — | Skip Module 4 (do not write merged GFF3) |
+| `--skip_module5` | — | Skip Module 5 (do not generate visualization figure) |
+| `--format` | `pdf` | Plot format(s): `pdf`, `png`, `svg` — comma-separated |
+| `--top_sequences` | `50` | Number of sequences shown in the ideogram, sorted by length |
 | `--force` | — | Rerun all steps even if outputs already exist |
 | `--dry_run` | — | Validate inputs, print steps, exit |
 | `--disable_co2_tracking` | — | Disable codecarbon carbon tracking |
@@ -171,6 +176,7 @@ comparison of the two tools.
 │   ├── mod03_tRNA_{prefix}.gff3            tRNA features (Module 3)
 │   ├── mod04_annotation_{prefix}.gff3      Combined GFF3 (Module 4)
 │   ├── mod04_summary_{prefix}.tsv          Detailed feature summary (count, length, % genome)
+│   ├── mod05_plot_{prefix}.pdf             Visualization figure (Module 5; format set by --format)
 │   └── {prefix}.run_summary.json           Run metadata and resource usage
 ├── workdir/
 │   ├── masked_soft.fasta                   Soft-masked FASTA (tantan lowercase)
@@ -225,6 +231,63 @@ tRNA            tRNA-Gly             289      21675              0.0031
 - `pct_genome` — `total_length_bp / genome_size × 100` (4 decimal places; `NA` if genome size unavailable)
 - rRNA subtypes are written in biological order (5S → 5.8S → SSU → LSU)
 - tRNA subtypes are sorted by count descending, then alphabetically
+
+---
+
+## Visualization (Module 5)
+
+`results/mod05_plot_{prefix}.pdf` is a three-panel figure generated
+automatically at the end of every run (unless `--skip_module5` is set).
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Genome ideogram (top N sequences by length)                     │
+│  grey bar = sequence; amber = telomere; blue = rRNA; red = tRNA  │
+├────────────────────────┬───────────────────────┬─────────────────┤
+│  rRNA subtypes         │  tRNA types (top 20)  │  Genome donut   │
+│  horizontal bar chart  │  horizontal bar chart  │  composition    │
+│  (biological order)    │  (count descending)    │  (% by class)   │
+└────────────────────────┴───────────────────────┴─────────────────┘
+```
+
+**Panel 1 — Genome ideogram**
+
+Each sequence is drawn as a horizontal bar.  Features are overlaid using
+`broken_barh` with alpha blending: rRNA clusters appear as denser blue
+bands; individual tRNA loci show as red ticks; telomeres are fully opaque
+amber marks at sequence ends.  Sequences are sorted by length (longest at
+top) and limited to `--top_sequences` (default 50).
+
+**Panel 2 — rRNA subtype bars**
+
+Horizontal bar chart showing count per rRNA subtype in biological order:
+5S → 5.8S → SSU → LSU.  Count labels are printed at the end of each bar.
+
+**Panel 3 — tRNA type bars**
+
+Horizontal bar chart showing count per tRNA type, sorted by count
+descending (up to 20 types shown).
+
+**Panel 4 — Genome composition donut**
+
+A ring chart showing the fraction of the genome covered by telomere, rRNA,
+and tRNA sequences.  The remaining fraction is labelled "Other".  Genome
+size in Mb is printed in the donut hole.  Percentages are derived from the
+`total_length_bp` column of the summary TSV.
+
+**Format and sequence count**
+
+```bash
+# Save as PNG and SVG instead of PDF
+python3 scripts/UbboTELORNA.py --fasta genome.fasta --output run/ \
+    --skip_module0 --skip_module1 --skip_module2 --skip_module3 \
+    --skip_integration \
+    --format png,svg
+
+# Show all scaffolds (e.g. fragmented assembly)
+python3 scripts/UbboTELORNA.py --fasta genome.fasta --output run/ \
+    --top_sequences 200
+```
 
 ---
 
@@ -329,29 +392,43 @@ grep "telomere" annotation_run/results/mod00_telomeres_*.gff3 | wc -l
 grep -v "^#" annotation_run/results/mod02_rRNA_*.gff3 \
     | cut -f9 | grep -oP 'Name=\K[^;]+' | sort | uniq -c | sort -rn
 
-# 6. Resume from checkpoint (if run was interrupted)
+# 6. View the summary table and figure
+cat annotation_run/results/mod04_summary_*.tsv
+# open annotation_run/results/mod05_plot_*.pdf    # macOS
+# evince annotation_run/results/mod05_plot_*.pdf  # Linux
+
+# 7. Resume from checkpoint (if run was interrupted)
 python3 scripts/UbboTELORNA.py \
     --fasta  genome.fasta \
     --output annotation_run/
     # Modules already completed are skipped automatically
 
-# 7. Force full rerun
+# 8. Force full rerun
 python3 scripts/UbboTELORNA.py \
     --fasta  genome.fasta \
     --output annotation_run/ \
     --force
 
-# 8. Supply known telomere repeat (skip auto-detection)
+# 9. Supply known telomere repeat (skip auto-detection)
 python3 scripts/UbboTELORNA.py \
     --fasta            genome.fasta \
     --output           annotation_run/ \
     --telomere_repeat  TTAGGG          # vertebrate
 
-# 9. Air-gapped HPC: use local Rfam CM directory
+# 10. Air-gapped HPC: use local Rfam CM directory
 python3 scripts/UbboTELORNA.py \
     --fasta    genome.fasta \
     --output   annotation_run/ \
     --rfam_dir /shared/databases/rfam_cms/
+
+# 11. Regenerate the figure only (annotation modules already done)
+python3 scripts/UbboTELORNA.py \
+    --fasta        genome.fasta \
+    --output       annotation_run/ \
+    --skip_module0 --skip_module1 --skip_module2 \
+    --skip_module3 --skip_integration \
+    --format       png,pdf \
+    --top_sequences 100
 ```
 
 ---
@@ -394,7 +471,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 **v0.1.0** _(2026-06-27)_ — initial release: telomere k-mer scan, tantan
 masking, nhmmer (default) / cmsearch rRNA annotation, ARAGORN tRNA annotation,
-GFF3 integration.
+GFF3 integration, matplotlib visualization figure (Module 5).
 
 ---
 
@@ -407,6 +484,7 @@ GFF3 integration.
 | **Rfam** | Kalvari I et al. (2021) *Nucleic Acids Res* 49:D192–D200 |
 | **ARAGORN** | Laslett D, Canback B (2004) *Nucleic Acids Res* 32:11–16 |
 | **tantan** | Frith MC (2011) *Nucleic Acids Res* 39:e23 |
+| **matplotlib** | Hunter JD (2007) *Comput Sci Eng* 9:90–95 |
 
 ---
 
