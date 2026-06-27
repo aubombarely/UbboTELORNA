@@ -1,0 +1,759 @@
+# UbboTELORNA benchmark Snakefile
+# ─────────────────────────────────────────────────────────────────────────────
+# Three benchmark dimensions:
+#   1. Correctness  — sensitivity, precision, F1 vs. RefSeq GFF3
+#   2. Robustness   — adversarial telomere-prefix test + fragmented assembly
+#   3. Performance  — wall-clock time and peak RSS at varied thread counts
+#
+# Quick start:
+#   conda activate ubbotelorna_bench
+#   snakemake --cores 16 --use-conda all
+#
+# Download only:
+#   snakemake --cores 4 --use-conda download_all
+#
+# Single genome:
+#   snakemake --cores 8 results/metrics/athaliana/ubbotelorna_nhmmer_rrna_metrics.tsv
+
+configfile: "config.yaml"
+
+from pathlib import Path
+
+# ── helper: all genomes that have a RefSeq GFF3 ────────────────────────────
+def genomes_with_ref():
+    return [g for g, v in config["genomes"].items() if v.get("has_refseq_gff")]
+
+def all_genomes():
+    return list(config["genomes"].keys())
+
+# ── genome FASTA path (downloaded or user-provided) ─────────────────────────
+def genome_fasta(wildcards):
+    g = wildcards.genome
+    local = config["genomes"][g].get("fasta_path")
+    if local:
+        return local
+    return f"{config['results_dir']}/genomes/{g}/{g}.fasta"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Target rules
+# ═══════════════════════════════════════════════════════════════════════════
+
+rule all:
+    input:
+        # correctness metrics (all tools, all genomes with reference)
+        expand("{res}/metrics/{genome}/ubbotelorna_nhmmer_rrna_metrics.tsv",
+               res=config["results_dir"], genome=genomes_with_ref()),
+        expand("{res}/metrics/{genome}/ubbotelorna_cmsearch_rrna_metrics.tsv",
+               res=config["results_dir"], genome=genomes_with_ref()),
+        expand("{res}/metrics/{genome}/barrnap_rrna_metrics.tsv",
+               res=config["results_dir"], genome=genomes_with_ref()),
+        expand("{res}/metrics/{genome}/ubbotelorna_trna_metrics.tsv",
+               res=config["results_dir"], genome=genomes_with_ref()),
+        expand("{res}/metrics/{genome}/trnascan_trna_metrics.tsv",
+               res=config["results_dir"], genome=genomes_with_ref()),
+        # telomere comparison (no reference; tool-vs-tool)
+        expand("{res}/metrics/{genome}/telomere_comparison.tsv",
+               res=config["results_dir"],
+               genome=[g for g in all_genomes()
+                       if config["genomes"][g].get("telomere_repeat")]),
+        # adversarial robustness
+        expand("{res}/robustness/{genome}/robustness_summary.tsv",
+               res=config["results_dir"],
+               genome=config["adversarial_genomes"]),
+        # performance
+        expand("{res}/performance/{genome}/perf_summary.tsv",
+               res=config["results_dir"],
+               genome=config["performance_genomes"]),
+        # final report
+        f"{config['results_dir']}/figures/benchmark_report.pdf",
+
+
+rule download_all:
+    input:
+        expand("{res}/genomes/{genome}/{genome}.fasta",
+               res=config["results_dir"],
+               genome=[g for g in all_genomes()
+                       if config["genomes"][g].get("accession")]),
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 1. Download genomes
+# ═══════════════════════════════════════════════════════════════════════════
+
+rule download_genome:
+    output:
+        fasta = "{res}/genomes/{genome}/{genome}.fasta",
+        gff3  = "{res}/genomes/{genome}/{genome}_ref.gff3",
+    params:
+        accession = lambda wc: config["genomes"][wc.genome]["accession"],
+        ncbi_group = lambda wc: config["genomes"][wc.genome]["ncbi_group"],
+        outdir    = lambda wc: f"{wc.res}/genomes/{wc.genome}",
+        genome    = lambda wc: wc.genome,
+    log:
+        "{res}/genomes/{genome}/{genome}_download.log",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/download_genomes.py "
+        "  --accession {params.accession} "
+        "  --group {params.ncbi_group} "
+        "  --outdir {params.outdir} "
+        "  --genome {params.genome} "
+        "  > {log} 2>&1"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2. Run tools — rRNA
+# ═══════════════════════════════════════════════════════════════════════════
+
+rule run_ubbotelorna_nhmmer:
+    input:
+        fasta = genome_fasta,
+    output:
+        gff3 = "{res}/annotations/{genome}/ubbotelorna_nhmmer/{genome}.gff3",
+    params:
+        kingdom = lambda wc: config["genomes"][wc.genome]["kingdom"],
+        outdir  = "{res}/annotations/{genome}/ubbotelorna_nhmmer/run",
+        script  = config["ubbotelorna_script"],
+    threads: config["default_threads"]
+    benchmark:
+        "{res}/performance/{genome}/ubbotelorna_nhmmer_t{threads}.benchmark.tsv"
+    log:
+        "{res}/annotations/{genome}/ubbotelorna_nhmmer/{genome}.log"
+    conda:
+        "../envs/UbboTELORNA.yaml"
+    shell:
+        """
+        python3 {params.script} \
+            --fasta {input.fasta} \
+            --output {params.outdir} \
+            --kingdom {params.kingdom} \
+            --search_tool nhmmer \
+            --threads {threads} \
+            --disable_co2_tracking \
+            --skip_module 5,6 \
+            > {log} 2>&1
+        cp {params.outdir}/results/mod04_integration_*.gff3 {output.gff3}
+        """
+
+
+rule run_ubbotelorna_cmsearch:
+    input:
+        fasta = genome_fasta,
+    output:
+        gff3 = "{res}/annotations/{genome}/ubbotelorna_cmsearch/{genome}.gff3",
+    params:
+        kingdom = lambda wc: config["genomes"][wc.genome]["kingdom"],
+        outdir  = "{res}/annotations/{genome}/ubbotelorna_cmsearch/run",
+        script  = config["ubbotelorna_script"],
+    threads: config["default_threads"]
+    benchmark:
+        "{res}/performance/{genome}/ubbotelorna_cmsearch_t{threads}.benchmark.tsv"
+    log:
+        "{res}/annotations/{genome}/ubbotelorna_cmsearch/{genome}.log"
+    conda:
+        "../envs/UbboTELORNA.yaml"
+    shell:
+        """
+        python3 {params.script} \
+            --fasta {input.fasta} \
+            --output {params.outdir} \
+            --kingdom {params.kingdom} \
+            --search_tool cmsearch \
+            --threads {threads} \
+            --disable_co2_tracking \
+            --skip_module 5,6 \
+            > {log} 2>&1
+        cp {params.outdir}/results/mod04_integration_*.gff3 {output.gff3}
+        """
+
+
+rule run_barrnap:
+    input:
+        fasta = genome_fasta,
+    output:
+        gff3 = "{res}/annotations/{genome}/barrnap/{genome}_raw.gff3",
+    params:
+        kingdom = lambda wc: config["genomes"][wc.genome]["barrnap_kingdom"],
+    threads: config["default_threads"]
+    benchmark:
+        "{res}/performance/{genome}/barrnap_t{threads}.benchmark.tsv"
+    log:
+        "{res}/annotations/{genome}/barrnap/{genome}.log"
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "barrnap --kingdom {params.kingdom} --threads {threads} "
+        "  {input.fasta} > {output.gff3} 2> {log}"
+
+
+rule normalise_barrnap:
+    input:
+        gff3 = "{res}/annotations/{genome}/barrnap/{genome}_raw.gff3",
+    output:
+        gff3 = "{res}/annotations/{genome}/barrnap/{genome}.gff3",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/normalise_gff3.py --tool barrnap "
+        "  --input {input.gff3} --output {output.gff3}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 3. Run tools — tRNA
+# ═══════════════════════════════════════════════════════════════════════════
+
+rule run_trnascan:
+    input:
+        fasta = genome_fasta,
+    output:
+        gff3 = "{res}/annotations/{genome}/trnascan/{genome}_raw.gff3",
+        stats = "{res}/annotations/{genome}/trnascan/{genome}_stats.txt",
+    params:
+        mode = lambda wc: config["genomes"][wc.genome]["trnascan_mode"],
+    threads: config["default_threads"]
+    benchmark:
+        "{res}/performance/{genome}/trnascan_t{threads}.benchmark.tsv"
+    log:
+        "{res}/annotations/{genome}/trnascan/{genome}.log"
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "tRNAscan-SE {params.mode} --thread {threads} "
+        "  --gff {output.gff3} --summary {output.stats} "
+        "  {input.fasta} > {log} 2>&1"
+
+
+rule normalise_trnascan:
+    input:
+        gff3 = "{res}/annotations/{genome}/trnascan/{genome}_raw.gff3",
+    output:
+        gff3 = "{res}/annotations/{genome}/trnascan/{genome}.gff3",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/normalise_gff3.py --tool trnascan "
+        "  --input {input.gff3} --output {output.gff3}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. Run tools — telomere
+# ═══════════════════════════════════════════════════════════════════════════
+
+rule run_tidk:
+    input:
+        fasta = genome_fasta,
+    output:
+        tsv = "{res}/annotations/{genome}/tidk/{genome}_telomere.tsv",
+    params:
+        repeat = lambda wc: config["genomes"][wc.genome]["telomere_repeat"],
+        outdir = "{res}/annotations/{genome}/tidk",
+        prefix = "{genome}",
+    log:
+        "{res}/annotations/{genome}/tidk/{genome}.log"
+    conda:
+        "envs/benchmark.yaml"
+    run:
+        import subprocess, shutil
+        rep = params.repeat
+        if rep == "auto":
+            # explore phase: let tidk find the best repeat
+            r = subprocess.run(
+                ["tidk", "explore", "--fasta", input.fasta,
+                 "--output", params.outdir, "--prefix", params.prefix],
+                capture_output=True, text=True
+            )
+            with open(log[0], "w") as fh:
+                fh.write(r.stdout + r.stderr)
+            # pick top-ranked repeat from explore output
+            explore_out = f"{params.outdir}/{params.prefix}_telomeric_repeat_windows.tsv"
+            with open(explore_out) as fh:
+                next(fh)  # header
+                rep = next(fh).split("\t")[0]
+        subprocess.run(
+            ["tidk", "search", "--fasta", input.fasta,
+             "--string", rep,
+             "--output", params.outdir, "--prefix", params.prefix],
+            check=True, capture_output=True, text=True
+        )
+        shutil.copy(f"{params.outdir}/{params.prefix}_telomeric_repeat_windows.tsv",
+                    output.tsv)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 5. Correctness metrics
+# ═══════════════════════════════════════════════════════════════════════════
+
+def rrna_gff(tool, wildcards):
+    """Resolve normalised rRNA GFF3 path for a given tool."""
+    if tool.startswith("ubbotelorna"):
+        return f"{wildcards.res}/annotations/{wildcards.genome}/{tool}/{wildcards.genome}.gff3"
+    return f"{wildcards.res}/annotations/{wildcards.genome}/{tool}/{wildcards.genome}.gff3"
+
+
+rule compare_rrna_ubbotelorna_nhmmer:
+    input:
+        predicted = "{res}/annotations/{genome}/ubbotelorna_nhmmer/{genome}.gff3",
+        reference = "{res}/genomes/{genome}/{genome}_ref.gff3",
+    output:
+        tsv = "{res}/metrics/{genome}/ubbotelorna_nhmmer_rrna_metrics.tsv",
+    params:
+        tool     = "ubbotelorna_nhmmer",
+        feature  = "rRNA",
+        threshold = config["overlap_threshold"],
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/compare_annotations.py "
+        "  --predicted {input.predicted} "
+        "  --reference {input.reference} "
+        "  --feature {params.feature} "
+        "  --tool {params.tool} "
+        "  --genome {wildcards.genome} "
+        "  --threshold {params.threshold} "
+        "  --output {output.tsv}"
+
+
+rule compare_rrna_ubbotelorna_cmsearch:
+    input:
+        predicted = "{res}/annotations/{genome}/ubbotelorna_cmsearch/{genome}.gff3",
+        reference = "{res}/genomes/{genome}/{genome}_ref.gff3",
+    output:
+        tsv = "{res}/metrics/{genome}/ubbotelorna_cmsearch_rrna_metrics.tsv",
+    params:
+        tool      = "ubbotelorna_cmsearch",
+        feature   = "rRNA",
+        threshold = config["overlap_threshold"],
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/compare_annotations.py "
+        "  --predicted {input.predicted} "
+        "  --reference {input.reference} "
+        "  --feature {params.feature} "
+        "  --tool {params.tool} "
+        "  --genome {wildcards.genome} "
+        "  --threshold {params.threshold} "
+        "  --output {output.tsv}"
+
+
+rule compare_rrna_barrnap:
+    input:
+        predicted = "{res}/annotations/{genome}/barrnap/{genome}.gff3",
+        reference = "{res}/genomes/{genome}/{genome}_ref.gff3",
+    output:
+        tsv = "{res}/metrics/{genome}/barrnap_rrna_metrics.tsv",
+    params:
+        tool      = "barrnap",
+        feature   = "rRNA",
+        threshold = config["overlap_threshold"],
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/compare_annotations.py "
+        "  --predicted {input.predicted} "
+        "  --reference {input.reference} "
+        "  --feature {params.feature} "
+        "  --tool {params.tool} "
+        "  --genome {wildcards.genome} "
+        "  --threshold {params.threshold} "
+        "  --output {output.tsv}"
+
+
+rule compare_trna_ubbotelorna:
+    input:
+        predicted = "{res}/annotations/{genome}/ubbotelorna_nhmmer/{genome}.gff3",
+        reference = "{res}/genomes/{genome}/{genome}_ref.gff3",
+    output:
+        tsv = "{res}/metrics/{genome}/ubbotelorna_trna_metrics.tsv",
+    params:
+        tool      = "ubbotelorna_nhmmer",
+        feature   = "tRNA",
+        threshold = config["overlap_threshold"],
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/compare_annotations.py "
+        "  --predicted {input.predicted} "
+        "  --reference {input.reference} "
+        "  --feature {params.feature} "
+        "  --tool {params.tool} "
+        "  --genome {wildcards.genome} "
+        "  --threshold {params.threshold} "
+        "  --output {output.tsv}"
+
+
+rule compare_trna_trnascan:
+    input:
+        predicted = "{res}/annotations/{genome}/trnascan/{genome}.gff3",
+        reference = "{res}/genomes/{genome}/{genome}_ref.gff3",
+    output:
+        tsv = "{res}/metrics/{genome}/trnascan_trna_metrics.tsv",
+    params:
+        tool      = "trnascan",
+        feature   = "tRNA",
+        threshold = config["overlap_threshold"],
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/compare_annotations.py "
+        "  --predicted {input.predicted} "
+        "  --reference {input.reference} "
+        "  --feature {params.feature} "
+        "  --tool {params.tool} "
+        "  --genome {wildcards.genome} "
+        "  --threshold {params.threshold} "
+        "  --output {output.tsv}"
+
+
+rule compare_telomeres:
+    input:
+        ubbo = "{res}/annotations/{genome}/ubbotelorna_nhmmer/{genome}.gff3",
+        tidk = "{res}/annotations/{genome}/tidk/{genome}_telomere.tsv",
+    output:
+        tsv = "{res}/metrics/{genome}/telomere_comparison.tsv",
+    params:
+        genome = "{genome}",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/compare_annotations.py "
+        "  --predicted {input.ubbo} "
+        "  --tidk_tsv  {input.tidk} "
+        "  --feature   telomere "
+        "  --tool      ubbotelorna_nhmmer "
+        "  --genome    {params.genome} "
+        "  --threshold {config[overlap_threshold]} "
+        "  --output    {output.tsv}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 6. Robustness benchmark
+# ═══════════════════════════════════════════════════════════════════════════
+
+rule create_adversarial:
+    input:
+        fasta = genome_fasta,
+    output:
+        fasta = "{res}/robustness/{genome}/{genome}_adversarial.fasta",
+    params:
+        repeat   = lambda wc: config["genomes"][wc.genome]["telomere_repeat"],
+        n_copies = config["adversarial_n_repeats"],
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/create_adversarial.py "
+        "  --fasta {input.fasta} "
+        "  --repeat {params.repeat} "
+        "  --n_copies {params.n_copies} "
+        "  --output {output.fasta}"
+
+
+rule create_fragmented:
+    input:
+        fasta = genome_fasta,
+    output:
+        fasta = "{res}/robustness/{genome}/{genome}_fragmented.fasta",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/create_adversarial.py "
+        "  --fasta {input.fasta} "
+        "  --fragment_size 10000 "
+        "  --output {output.fasta}"
+
+
+rule run_ubbotelorna_adversarial:
+    input:
+        fasta = "{res}/robustness/{genome}/{genome}_adversarial.fasta",
+    output:
+        gff3 = "{res}/robustness/{genome}/ubbotelorna_adversarial.gff3",
+    params:
+        kingdom = lambda wc: config["genomes"][wc.genome]["kingdom"],
+        outdir  = "{res}/robustness/{genome}/ubbotelorna_adversarial_run",
+        script  = config["ubbotelorna_script"],
+    threads: config["default_threads"]
+    log:
+        "{res}/robustness/{genome}/ubbotelorna_adversarial.log"
+    conda:
+        "../envs/UbboTELORNA.yaml"
+    shell:
+        """
+        python3 {params.script} \
+            --fasta {input.fasta} \
+            --output {params.outdir} \
+            --kingdom {params.kingdom} \
+            --threads {threads} \
+            --disable_co2_tracking \
+            --skip_module 5,6 \
+            > {log} 2>&1
+        cp {params.outdir}/results/mod04_integration_*.gff3 {output.gff3}
+        """
+
+
+rule run_barrnap_adversarial:
+    input:
+        fasta = "{res}/robustness/{genome}/{genome}_adversarial.fasta",
+    output:
+        gff3 = "{res}/robustness/{genome}/barrnap_adversarial_raw.gff3",
+    params:
+        kingdom = lambda wc: config["genomes"][wc.genome]["barrnap_kingdom"],
+    threads: config["default_threads"]
+    log:
+        "{res}/robustness/{genome}/barrnap_adversarial.log"
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "barrnap --kingdom {params.kingdom} --threads {threads} "
+        "  {input.fasta} > {output.gff3} 2> {log} || true"
+        # "|| true" so a barrnap crash on repetitive sequences does not abort the rule
+
+
+rule normalise_barrnap_adversarial:
+    input:
+        gff3 = "{res}/robustness/{genome}/barrnap_adversarial_raw.gff3",
+    output:
+        gff3 = "{res}/robustness/{genome}/barrnap_adversarial.gff3",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/normalise_gff3.py --tool barrnap "
+        "  --input {input.gff3} --output {output.gff3}"
+
+
+rule run_ubbotelorna_fragmented:
+    input:
+        fasta = "{res}/robustness/{genome}/{genome}_fragmented.fasta",
+    output:
+        gff3 = "{res}/robustness/{genome}/ubbotelorna_fragmented.gff3",
+    params:
+        kingdom = lambda wc: config["genomes"][wc.genome]["kingdom"],
+        outdir  = "{res}/robustness/{genome}/ubbotelorna_fragmented_run",
+        script  = config["ubbotelorna_script"],
+    threads: config["default_threads"]
+    log:
+        "{res}/robustness/{genome}/ubbotelorna_fragmented.log"
+    conda:
+        "../envs/UbboTELORNA.yaml"
+    shell:
+        """
+        python3 {params.script} \
+            --fasta {input.fasta} \
+            --output {params.outdir} \
+            --kingdom {params.kingdom} \
+            --threads {threads} \
+            --disable_co2_tracking \
+            --skip_module 5,6 \
+            > {log} 2>&1
+        cp {params.outdir}/results/mod04_integration_*.gff3 {output.gff3}
+        """
+
+
+rule run_barrnap_fragmented:
+    input:
+        fasta = "{res}/robustness/{genome}/{genome}_fragmented.fasta",
+    output:
+        gff3 = "{res}/robustness/{genome}/barrnap_fragmented_raw.gff3",
+    params:
+        kingdom = lambda wc: config["genomes"][wc.genome]["barrnap_kingdom"],
+    threads: config["default_threads"]
+    log:
+        "{res}/robustness/{genome}/barrnap_fragmented.log"
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "barrnap --kingdom {params.kingdom} --threads {threads} "
+        "  {input.fasta} > {output.gff3} 2> {log} || true"
+
+
+rule normalise_barrnap_fragmented:
+    input:
+        gff3 = "{res}/robustness/{genome}/barrnap_fragmented_raw.gff3",
+    output:
+        gff3 = "{res}/robustness/{genome}/barrnap_fragmented.gff3",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/normalise_gff3.py --tool barrnap "
+        "  --input {input.gff3} --output {output.gff3}"
+
+
+rule robustness_summary:
+    input:
+        native_ubbo      = lambda wc: f"{wc.res}/annotations/{wc.genome}/ubbotelorna_nhmmer/{wc.genome}.gff3",
+        native_barrnap   = lambda wc: f"{wc.res}/annotations/{wc.genome}/barrnap/{wc.genome}.gff3",
+        advers_ubbo      = "{res}/robustness/{genome}/ubbotelorna_adversarial.gff3",
+        advers_barrnap   = "{res}/robustness/{genome}/barrnap_adversarial.gff3",
+        fragment_ubbo    = "{res}/robustness/{genome}/ubbotelorna_fragmented.gff3",
+        fragment_barrnap = "{res}/robustness/{genome}/barrnap_fragmented.gff3",
+        reference        = lambda wc: f"{wc.res}/genomes/{wc.genome}/{wc.genome}_ref.gff3"
+                           if config["genomes"][wc.genome].get("has_refseq_gff")
+                           else [],
+    output:
+        tsv = "{res}/robustness/{genome}/robustness_summary.tsv",
+    params:
+        genome    = "{genome}",
+        threshold = config["overlap_threshold"],
+        has_ref   = lambda wc: str(config["genomes"][wc.genome].get("has_refseq_gff", False)),
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/compare_annotations.py "
+        "  --robustness_mode "
+        "  --native_ubbo    {input.native_ubbo} "
+        "  --native_barrnap {input.native_barrnap} "
+        "  --advers_ubbo    {input.advers_ubbo} "
+        "  --advers_barrnap {input.advers_barrnap} "
+        "  --fragment_ubbo  {input.fragment_ubbo} "
+        "  --fragment_barrnap {input.fragment_barrnap} "
+        "  --genome   {params.genome} "
+        "  --threshold {params.threshold} "
+        "  --output    {output.tsv}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7. Performance benchmark (thread sweep)
+# ═══════════════════════════════════════════════════════════════════════════
+
+rule perf_ubbotelorna_sweep:
+    input:
+        fasta = genome_fasta,
+    output:
+        done = touch("{res}/performance/{genome}/ubbotelorna_t{nthreads}.done"),
+    params:
+        kingdom = lambda wc: config["genomes"][wc.genome]["kingdom"],
+        outdir  = "{res}/performance/{genome}/ubbotelorna_t{nthreads}_run",
+        script  = config["ubbotelorna_script"],
+    threads: lambda wc: int(wc.nthreads)
+    benchmark:
+        "{res}/performance/{genome}/ubbotelorna_nhmmer_t{nthreads}.benchmark.tsv"
+    log:
+        "{res}/performance/{genome}/ubbotelorna_t{nthreads}.log"
+    conda:
+        "../envs/UbboTELORNA.yaml"
+    shell:
+        """
+        python3 {params.script} \
+            --fasta {input.fasta} \
+            --output {params.outdir} \
+            --kingdom {params.kingdom} \
+            --threads {threads} \
+            --disable_co2_tracking \
+            --skip_module 5,6 \
+            > {log} 2>&1
+        """
+
+
+rule perf_barrnap_sweep:
+    input:
+        fasta = genome_fasta,
+    output:
+        done = touch("{res}/performance/{genome}/barrnap_t{nthreads}.done"),
+    params:
+        kingdom = lambda wc: config["genomes"][wc.genome]["barrnap_kingdom"],
+        gff3    = "{res}/performance/{genome}/barrnap_t{nthreads}.gff3",
+    threads: lambda wc: int(wc.nthreads)
+    benchmark:
+        "{res}/performance/{genome}/barrnap_t{nthreads}.benchmark.tsv"
+    log:
+        "{res}/performance/{genome}/barrnap_t{nthreads}.log"
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "barrnap --kingdom {params.kingdom} --threads {threads} "
+        "  {input.fasta} > {params.gff3} 2> {log}"
+
+
+rule perf_trnascan_sweep:
+    input:
+        fasta = genome_fasta,
+    output:
+        done = touch("{res}/performance/{genome}/trnascan_t{nthreads}.done"),
+    params:
+        mode = lambda wc: config["genomes"][wc.genome]["trnascan_mode"],
+        gff3 = "{res}/performance/{genome}/trnascan_t{nthreads}.gff3",
+    threads: lambda wc: int(wc.nthreads)
+    benchmark:
+        "{res}/performance/{genome}/trnascan_t{nthreads}.benchmark.tsv"
+    log:
+        "{res}/performance/{genome}/trnascan_t{nthreads}.log"
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "tRNAscan-SE {params.mode} --thread {threads} "
+        "  --gff {params.gff3} {input.fasta} > {log} 2>&1"
+
+
+rule perf_summary:
+    input:
+        ubbo    = expand("{{res}}/performance/{{genome}}/ubbotelorna_nhmmer_t{t}.benchmark.tsv",
+                         t=config["performance_threads"]),
+        barrnap = expand("{{res}}/performance/{{genome}}/barrnap_t{t}.benchmark.tsv",
+                         t=config["performance_threads"]),
+        trnascan = expand("{{res}}/performance/{{genome}}/trnascan_t{t}.benchmark.tsv",
+                          t=config["performance_threads"]),
+    output:
+        tsv = "{res}/performance/{genome}/perf_summary.tsv",
+    params:
+        genome  = "{genome}",
+        threads = config["performance_threads"],
+    run:
+        import csv, os
+        rows = []
+        tools = {
+            "ubbotelorna_nhmmer": input.ubbo,
+            "barrnap":            input.barrnap,
+            "trnascan":           input.trnascan,
+        }
+        for tool, files in tools.items():
+            for t, f in zip(params.threads, files):
+                if not os.path.exists(f):
+                    continue
+                with open(f) as fh:
+                    reader = csv.DictReader(fh, delimiter="\t")
+                    for row in reader:
+                        rows.append({
+                            "genome":    params.genome,
+                            "tool":      tool,
+                            "threads":   t,
+                            "s":         row.get("s", ""),
+                            "max_rss":   row.get("max_rss", ""),
+                            "cpu_time":  row.get("cpu_time", ""),
+                        })
+        with open(output.tsv, "w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=["genome","tool","threads","s","max_rss","cpu_time"],
+                                    delimiter="\t")
+            writer.writeheader()
+            writer.writerows(rows)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8. Final report
+# ═══════════════════════════════════════════════════════════════════════════
+
+rule benchmark_report:
+    input:
+        correctness = expand("{res}/metrics/{genome}/ubbotelorna_nhmmer_rrna_metrics.tsv",
+                             res=config["results_dir"], genome=genomes_with_ref()),
+        robustness  = expand("{res}/robustness/{genome}/robustness_summary.tsv",
+                             res=config["results_dir"],
+                             genome=config["adversarial_genomes"]),
+        performance = expand("{res}/performance/{genome}/perf_summary.tsv",
+                             res=config["results_dir"],
+                             genome=config["performance_genomes"]),
+    output:
+        pdf = "{res}/figures/benchmark_report.pdf",
+        png = "{res}/figures/benchmark_report.png",
+    params:
+        metrics_dir    = f"{config['results_dir']}/metrics",
+        robustness_dir = f"{config['results_dir']}/robustness",
+        perf_dir       = f"{config['results_dir']}/performance",
+        out_base       = f"{config['results_dir']}/figures/benchmark_report",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python3 scripts/benchmark_report.py "
+        "  --metrics_dir    {params.metrics_dir} "
+        "  --robustness_dir {params.robustness_dir} "
+        "  --perf_dir       {params.perf_dir} "
+        "  --output         {params.out_base}"

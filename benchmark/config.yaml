@@ -1,0 +1,200 @@
+# UbboTELORNA benchmark configuration
+# ------------------------------------
+# Edit paths/threads before running; genome entries are pre-populated
+# from docs/benchmarking.md.
+
+# ── output root (relative to Snakefile) ────────────────────────────────────
+results_dir: "results"
+
+# ── UbboTELORNA script (relative to benchmark/) ────────────────────────────
+ubbotelorna_script: "../scripts/UbboTELORNA.py"
+
+# ── thread counts ───────────────────────────────────────────────────────────
+# Default thread count used for the correctness and robustness benchmarks.
+default_threads: 8
+
+# Thread counts swept during the performance benchmark (on rice / human only).
+performance_threads: [1, 4, 8, 16, 32]
+
+# Performance benchmark genomes (subset of all genomes — skip largest ones by
+# default to keep runtime manageable; add "human_t2t" or "maize" if you have
+# the resources).
+performance_genomes: ["ecoli_k12", "bsubtilis", "scerevisiae",
+                      "celegans", "dmelanogaster", "athaliana",
+                      "osativa", "gallus"]
+
+# ── correctness / robustness overlap threshold ──────────────────────────────
+overlap_threshold: 0.80
+
+# ── adversarial robustness test ─────────────────────────────────────────────
+# Genomes used for the adversarial telomere-prefix test.
+adversarial_genomes: ["athaliana", "actinidia"]
+# Number of telomere repeat units prepended to each sequence.
+adversarial_n_repeats: 1000
+
+# ── genome definitions ──────────────────────────────────────────────────────
+# Fields:
+#   accession        NCBI RefSeq/GenBank accession (used by download_genomes.py)
+#   ncbi_group       group name for ncbi-genome-download (bacteria / fungi /
+#                    invertebrate / plant / vertebrate_mammalian /
+#                    vertebrate_other)
+#   kingdom          UbboTELORNA --kingdom value (euka / bacteria / archaea)
+#   barrnap_kingdom  barrnap --kingdom value (euk / bac / arc / mito)
+#   trnascan_mode    tRNAscan-SE mode flag (-E eukaryote / -B bacteria /
+#                    -A archaea / -G general)
+#   telomere_repeat  known telomere repeat unit for tidk (null = no telomere
+#                    e.g. circular bacteria; "auto" = let tidk discover it)
+#   size_mb          approximate genome size (informational only)
+#   has_refseq_gff   set false for genomes without a RefSeq GFF3
+#                    (metrics will be skipped for those)
+
+genomes:
+
+  # ── Prokaryotes ────────────────────────────────────────────────────────────
+  ecoli_k12:
+    accession:       "GCF_000005845.2"
+    organism:        "Escherichia coli K-12 MG1655"
+    ncbi_group:      bacteria
+    kingdom:         bacteria
+    barrnap_kingdom: bac
+    trnascan_mode:   "-B"
+    telomere_repeat: null          # circular chromosome
+    size_mb:         4.6
+    has_refseq_gff:  true
+
+  bsubtilis:
+    accession:       "GCF_000009045.1"
+    organism:        "Bacillus subtilis 168"
+    ncbi_group:      bacteria
+    kingdom:         bacteria
+    barrnap_kingdom: bac
+    trnascan_mode:   "-B"
+    telomere_repeat: null
+    size_mb:         4.2
+    has_refseq_gff:  true
+
+  # ── Fungi ──────────────────────────────────────────────────────────────────
+  scerevisiae:
+    accession:       "GCF_000146045.2"
+    organism:        "Saccharomyces cerevisiae S288C"
+    ncbi_group:      fungi
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "auto"
+    size_mb:         12.0
+    has_refseq_gff:  true
+
+  # ── Invertebrates ─────────────────────────────────────────────────────────
+  celegans:
+    accession:       "GCF_000002985.6"
+    organism:        "Caenorhabditis elegans WS285"
+    ncbi_group:      invertebrate
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGC"
+    size_mb:         100.0
+    has_refseq_gff:  true
+
+  dmelanogaster:
+    accession:       "GCF_000001215.4"
+    organism:        "Drosophila melanogaster dm6"
+    ncbi_group:      invertebrate
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "auto"        # retrotransposon-based; tidk will search
+    size_mb:         140.0
+    has_refseq_gff:  true
+
+  # ── Plants ─────────────────────────────────────────────────────────────────
+  smoellendorffii:
+    accession:       "GCF_000143415.1"
+    organism:        "Selaginella moellendorffii v1.0"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTAGGG"
+    size_mb:         100.0
+    has_refseq_gff:  true
+
+  athaliana:
+    accession:       "GCF_000001735.4"
+    organism:        "Arabidopsis thaliana TAIR10.1"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTAGGG"
+    size_mb:         135.0
+    has_refseq_gff:  true
+
+  osativa:
+    accession:       "GCF_001433935.1"
+    organism:        "Oryza sativa ssp. japonica IRGSP-1.0"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTAGGG"
+    size_mb:         375.0
+    has_refseq_gff:  true
+
+  actinidia:
+    accession:       null           # local genome — set fasta_path below
+    fasta_path:      null           # fill in before running: /path/to/actinidia.fasta
+    organism:        "Actinidia arguta"
+    ncbi_group:      null
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTAGGG"
+    size_mb:         700.0
+    has_refseq_gff:  false         # no RefSeq GFF3 — correctness metrics skipped
+
+  maize:
+    accession:       "GCF_000005005.2"
+    organism:        "Zea mays B73 RefGen_v4"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTAGGG"
+    size_mb:         2100.0
+    has_refseq_gff:  true
+
+  # ── Vertebrates ────────────────────────────────────────────────────────────
+  gallus:
+    accession:       "GCF_016699485.2"
+    organism:        "Gallus gallus GRCg7b"
+    ncbi_group:      vertebrate_other
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         1000.0
+    has_refseq_gff:  true
+
+  drerio:
+    accession:       "GCF_000002035.6"
+    organism:        "Danio rerio GRCz11"
+    ncbi_group:      vertebrate_other
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         1400.0
+    has_refseq_gff:  true
+
+  human_t2t:
+    accession:       "GCF_009914755.1"
+    organism:        "Homo sapiens T2T-CHM13v2.0"
+    ncbi_group:      vertebrate_mammalian
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         3100.0
+    has_refseq_gff:  true

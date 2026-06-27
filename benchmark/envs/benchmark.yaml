@@ -1,0 +1,16 @@
+name: ubbotelorna_bench
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - snakemake>=7.0
+  - ncbi-genome-download   # downloads FASTA + GFF3 from NCBI RefSeq
+  - barrnap                # rRNA comparator
+  - trnascan-se            # tRNA comparator
+  - tidk                   # telomere comparator (Rust binary via bioconda)
+  - matplotlib
+  - pandas
+  - scipy                  # for statistical tests in benchmark_report.py
+  - seaborn                # heatmap styling
