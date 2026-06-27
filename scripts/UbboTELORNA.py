@@ -478,7 +478,8 @@ def _parse_cmsearch_tblout(tblout: Path, evalue: float) -> list[dict]:
 
 
 def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
-                     rfam_dir: Path | None, workdir: Path, results: Path,
+                     rfam_dir: Path | None, mxsize: float,
+                     workdir: Path, results: Path,
                      prefix: str, force: bool) -> Path:
     """Run cmsearch and write rRNA GFF3."""
     out_gff3  = results / f"mod02_rRNA_{prefix}.gff3"
@@ -500,6 +501,8 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
         "--tblout", str(tblout),
         "-E",       str(evalue),
         "--noali",
+        "--rfam",                   # HMM pre-filter: find candidate windows before CM; essential for large genomes
+        "--mxsize", str(mxsize),    # cap DP matrix per thread (Mb); sequences exceeding this are skipped
         str(cm_file),
         str(search_fa),
     ], cwd=workdir)
@@ -704,6 +707,11 @@ def _build_parser() -> argparse.ArgumentParser:
     rrna.add_argument("--rfam_dir", type=Path, default=None,
                       help=f"Directory with pre-downloaded Rfam .cm files "
                            f"(default: auto-download to {_DEFAULT_CACHE})")
+    rrna.add_argument("--cmsearch_mxsize", type=float, default=512.0,
+                      help="Max DP matrix size per cmsearch thread in Mb — "
+                           "sequences exceeding this are skipped with a warning "
+                           "(default: 512). Lower if RAM is limited; raise if "
+                           "large chromosomes are missed.")
 
     gen = ap.add_argument_group("General")
     gen.add_argument("--threads", type=int, default=4,
@@ -885,6 +893,7 @@ def main() -> None:
             threads  = args.threads,
             evalue   = args.evalue,
             rfam_dir = args.rfam_dir,
+            mxsize   = args.cmsearch_mxsize,
             workdir  = workdir,
             results  = results,
             prefix   = prefix,
