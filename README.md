@@ -38,6 +38,10 @@ UbboTELORNA solves this by:
 See [docs/about_rrna_identification.md](docs/about_rrna_identification.md) for a detailed
 comparison of nhmmer vs cmsearch: speed, memory, sensitivity, and when to use each.
 
+See [docs/benchmarking.md](docs/benchmarking.md) for the full benchmark plan:
+tools compared, genome set (13 genomes across prokaryotes, fungi, invertebrates,
+plants, and vertebrates), metrics, and robustness tests.
+
 ---
 
 ## Overview
