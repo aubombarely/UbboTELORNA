@@ -9,7 +9,7 @@ domains of life:
 | Bacteria | 4 | *E. coli*, *B. subtilis*, *Synechocystis* (cyanobacterium), *Streptomyces* (linear chr.) |
 | Archaea | 3 | *M. jannaschii* (Methanococci), *S. acidocaldarius* (Crenarchaeota), *H. volcanii* (Halobacteria) |
 | Fungi | 4 | *S. cerevisiae*, *N. crassa*, *C. neoformans*, *A. fumigatus* |
-| Algae | 4 | *Chlamydomonas* + *Volvox* (green, 8-mer TTTTAGGG), *C. merolae* (red), *Ectocarpus* (brown) |
+| Algae | 4 | *Ostreococcus tauri* + *Volvox* (green Chlorophyta), *C. merolae* (red), *Ectocarpus* (brown) |
 | Protozoa | 3 | *Plasmodium* (Apicomplexa), *Trypanosoma* (Kinetoplastida), *Tetrahymena* (TTGGGG) |
 | Plants | 10 | Moss → lycophyte → monocots → dicots; includes allotetraploid tobacco (~4.5 Gb) |
 | Invertebrates | 7 | Nematoda, Insecta ×2, Arachnida, Platyhelminthes, Echinodermata, Mollusca |

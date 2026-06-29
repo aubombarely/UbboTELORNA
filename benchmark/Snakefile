@@ -116,8 +116,6 @@ rule run_ubbotelorna_nhmmer:
         outdir  = "{res}/annotations/{genome}/ubbotelorna_nhmmer/run",
         script  = config["ubbotelorna_script"],
     threads: config["default_threads"]
-    benchmark:
-        "{res}/performance/{genome}/ubbotelorna_nhmmer_t{threads}.benchmark.tsv"
     log:
         "{res}/annotations/{genome}/ubbotelorna_nhmmer/{genome}.log"
     conda:
@@ -147,8 +145,6 @@ rule run_ubbotelorna_cmsearch:
         outdir  = "{res}/annotations/{genome}/ubbotelorna_cmsearch/run",
         script  = config["ubbotelorna_script"],
     threads: config["default_threads"]
-    benchmark:
-        "{res}/performance/{genome}/ubbotelorna_cmsearch_t{threads}.benchmark.tsv"
     log:
         "{res}/annotations/{genome}/ubbotelorna_cmsearch/{genome}.log"
     conda:
@@ -176,8 +172,6 @@ rule run_barrnap:
     params:
         kingdom = lambda wc: config["genomes"][wc.genome]["barrnap_kingdom"],
     threads: config["default_threads"]
-    benchmark:
-        "{res}/performance/{genome}/barrnap_t{threads}.benchmark.tsv"
     log:
         "{res}/annotations/{genome}/barrnap/{genome}.log"
     conda:
@@ -212,8 +206,6 @@ rule run_trnascan:
     params:
         mode = lambda wc: config["genomes"][wc.genome]["trnascan_mode"],
     threads: config["default_threads"]
-    benchmark:
-        "{res}/performance/{genome}/trnascan_t{threads}.benchmark.tsv"
     log:
         "{res}/annotations/{genome}/trnascan/{genome}.log"
     conda:
@@ -283,13 +275,6 @@ rule run_tidk:
 # ═══════════════════════════════════════════════════════════════════════════
 # 5. Correctness metrics
 # ═══════════════════════════════════════════════════════════════════════════
-
-def rrna_gff(tool, wildcards):
-    """Resolve normalised rRNA GFF3 path for a given tool."""
-    if tool.startswith("ubbotelorna"):
-        return f"{wildcards.res}/annotations/{wildcards.genome}/{tool}/{wildcards.genome}.gff3"
-    return f"{wildcards.res}/annotations/{wildcards.genome}/{tool}/{wildcards.genome}.gff3"
-
 
 rule compare_rrna_ubbotelorna_nhmmer:
     input:
