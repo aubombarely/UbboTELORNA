@@ -1,13 +1,19 @@
 # UbboTELORNA benchmark
 
 This directory contains the reproducible benchmark comparing UbboTELORNA
-against barrnap, tRNAscan-SE, and tidk across 17 genomes spanning all
-major branches of life. The fungal set covers three classes: Sordariomycetes
-(*Neurospora crassa*), Basidiomycota (*Cryptococcus neoformans*), and
-Eurotiomycetes (*Aspergillus fumigatus*). The plant set includes *Nicotiana
-tabacum* (GCF_000715075.1, allotetraploid ~4.5 Gb) as the large-genome
-stress test and *Citrus sinensis* (GCF_022201045.2, ~360 Mb) for citrus
-diversity.
+against barrnap, tRNAscan-SE, and tidk across **40 genomes** spanning all
+domains of life:
+
+| Group | Count | Notable entries |
+|---|---|---|
+| Bacteria | 4 | *E. coli*, *B. subtilis*, *Synechocystis* (cyanobacterium), *Streptomyces* (linear chr.) |
+| Archaea | 3 | *M. jannaschii* (Methanococci), *S. acidocaldarius* (Crenarchaeota), *H. volcanii* (Halobacteria) |
+| Fungi | 4 | *S. cerevisiae*, *N. crassa*, *C. neoformans*, *A. fumigatus* |
+| Algae | 4 | *Chlamydomonas* + *Volvox* (green, 8-mer TTTTAGGG), *C. merolae* (red), *Ectocarpus* (brown) |
+| Protozoa | 3 | *Plasmodium* (Apicomplexa), *Trypanosoma* (Kinetoplastida), *Tetrahymena* (TTGGGG) |
+| Plants | 10 | Moss → lycophyte → monocots → dicots; includes allotetraploid tobacco (~4.5 Gb) |
+| Invertebrates | 7 | Nematoda, Insecta ×2, Arachnida, Platyhelminthes, Echinodermata, Mollusca |
+| Vertebrates | 5 | Ray-fin fish, amphibian, reptile, bird, mammal |
 
 See [docs/benchmarking.md](../docs/benchmarking.md) for the full benchmark
 design, genome descriptions, and rationale.

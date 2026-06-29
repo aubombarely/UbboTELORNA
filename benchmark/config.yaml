@@ -35,9 +35,9 @@ adversarial_n_repeats: 1000
 # ── genome definitions ──────────────────────────────────────────────────────
 # Fields:
 #   accession        NCBI RefSeq/GenBank accession (used by download_genomes.py)
-#   ncbi_group       group name for ncbi-genome-download (bacteria / fungi /
-#                    invertebrate / plant / vertebrate_mammalian /
-#                    vertebrate_other)
+#   ncbi_group       group name for ncbi-genome-download (archaea / bacteria /
+#                    fungi / invertebrate / plant / protozoa /
+#                    vertebrate_mammalian / vertebrate_other)
 #   kingdom          UbboTELORNA --kingdom value (euka / bacteria / archaea)
 #   barrnap_kingdom  barrnap --kingdom value (euk / bac / arc / mito)
 #   trnascan_mode    tRNAscan-SE mode flag (-E eukaryote / -B bacteria /
@@ -71,6 +71,62 @@ genomes:
     trnascan_mode:   "-B"
     telomere_repeat: null
     size_mb:         4.2
+    has_refseq_gff:  true
+
+  synechocystis:
+    accession:       "GCF_000009725.1"
+    organism:        "Synechocystis sp. PCC 6803"
+    ncbi_group:      bacteria
+    kingdom:         bacteria
+    barrnap_kingdom: bac
+    trnascan_mode:   "-B"
+    telomere_repeat: null          # circular chromosome
+    size_mb:         3.6
+    has_refseq_gff:  true
+
+  scoelicolor:
+    accession:       "GCF_000203835.1"
+    organism:        "Streptomyces coelicolor A3(2)"
+    ncbi_group:      bacteria
+    kingdom:         bacteria
+    barrnap_kingdom: bac
+    trnascan_mode:   "-B"
+    telomere_repeat: null          # linear chromosome but terminal proteins, not canonical repeats
+    size_mb:         8.7
+    has_refseq_gff:  true
+
+  # ── Archaea ────────────────────────────────────────────────────────────────
+  mjannaschii:
+    accession:       "GCF_000091665.1"
+    organism:        "Methanocaldococcus jannaschii DSM 2661"
+    ncbi_group:      archaea
+    kingdom:         archaea
+    barrnap_kingdom: arc
+    trnascan_mode:   "-A"
+    telomere_repeat: null          # circular chromosome
+    size_mb:         1.7
+    has_refseq_gff:  true
+
+  sacidocaldarius:
+    accession:       "GCF_000012285.1"
+    organism:        "Sulfolobus acidocaldarius DSM 639"
+    ncbi_group:      archaea
+    kingdom:         archaea
+    barrnap_kingdom: arc
+    trnascan_mode:   "-A"
+    telomere_repeat: null
+    size_mb:         2.2
+    has_refseq_gff:  true
+
+  hvolcanii:
+    accession:       "GCF_000025685.1"
+    organism:        "Haloferax volcanii DS2"
+    ncbi_group:      archaea
+    kingdom:         archaea
+    barrnap_kingdom: arc
+    trnascan_mode:   "-A"
+    telomere_repeat: null          # main chromosome + 3 minichromosomes, all circular
+    size_mb:         3.9
     has_refseq_gff:  true
 
   # ── Fungi ──────────────────────────────────────────────────────────────────
@@ -118,6 +174,85 @@ genomes:
     size_mb:         29.0
     has_refseq_gff:  true
 
+  # ── Algae ──────────────────────────────────────────────────────────────────
+  creinhardtii:
+    accession:       "GCF_000002595.3"
+    organism:        "Chlamydomonas reinhardtii CC-503"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTTAGGG"    # 8-mer; Chlorophyta-type; different from plant TTTAGGG
+    size_mb:         111.0
+    has_refseq_gff:  true
+
+  vcarteri:
+    accession:       "GCF_000143455.1"
+    organism:        "Volvox carteri f. nagariensis"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTTAGGG"    # 8-mer; same Chlorophyta family as Chlamydomonas
+    size_mb:         138.0
+    has_refseq_gff:  true
+
+  cmerolae:
+    accession:       "GCF_000209535.1"
+    organism:        "Cyanidioschyzon merolae 10D"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "auto"        # red algal telomere unit uncertain
+    size_mb:         16.5
+    has_refseq_gff:  true
+
+  esiliculosus:
+    accession:       "GCF_000310025.1"
+    organism:        "Ectocarpus siliculosus Ec32"
+    ncbi_group:      protozoa       # Stramenopiles/Phaeophyceae fall under protozoa in ncbi-genome-download
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "auto"        # brown algal telomere unit uncertain
+    size_mb:         196.0
+    has_refseq_gff:  true
+
+  # ── Protozoa ───────────────────────────────────────────────────────────────
+  pfalciparum:
+    accession:       "GCF_000002765.5"
+    organism:        "Plasmodium falciparum 3D7"
+    ncbi_group:      protozoa
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "auto"        # degenerate GGGT(T/C)A-type; let tidk discover
+    size_mb:         23.0
+    has_refseq_gff:  true
+
+  tbrucei:
+    accession:       "GCF_000002365.2"
+    organism:        "Trypanosoma brucei TREU927"
+    ncbi_group:      protozoa
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         26.0
+    has_refseq_gff:  true
+
+  tthermophila:
+    accession:       "GCF_000189635.1"
+    organism:        "Tetrahymena thermophila SB210"
+    ncbi_group:      protozoa
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTGGGG"      # classic Blackburn repeat; telomerase was discovered here
+    size_mb:         104.0
+    has_refseq_gff:  true
+
   # ── Invertebrates ─────────────────────────────────────────────────────────
   celegans:
     accession:       "GCF_000002985.6"
@@ -139,6 +274,61 @@ genomes:
     trnascan_mode:   "-E"
     telomere_repeat: "auto"        # retrotransposon-based; tidk will search
     size_mb:         140.0
+    has_refseq_gff:  true
+
+  hmelpomene:
+    accession:       "GCF_000313835.2"
+    organism:        "Heliconius melpomene (postman butterfly)"
+    ncbi_group:      invertebrate
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         274.0
+    has_refseq_gff:  true
+
+  ptepidariorum:
+    accession:       "GCF_000365465.3"
+    organism:        "Parasteatoda tepidariorum (common house spider)"
+    ncbi_group:      invertebrate
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         1400.0
+    has_refseq_gff:  true
+
+  smansoni:
+    accession:       "GCF_000237925.1"
+    organism:        "Schistosoma mansoni"
+    ncbi_group:      invertebrate
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         363.0
+    has_refseq_gff:  true
+
+  spurpuratus:
+    accession:       "GCF_000002235.5"
+    organism:        "Strongylocentrotus purpuratus (purple sea urchin)"
+    ncbi_group:      invertebrate
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         800.0
+    has_refseq_gff:  true
+
+  cgigas:
+    accession:       "GCF_902806645.1"
+    organism:        "Crassostrea gigas (Pacific oyster)"
+    ncbi_group:      invertebrate
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         559.0
     has_refseq_gff:  true
 
   # ── Plants ─────────────────────────────────────────────────────────────────
@@ -208,6 +398,50 @@ genomes:
     size_mb:         2100.0
     has_refseq_gff:  true
 
+  pppatens:
+    accession:       "GCF_000002425.4"
+    organism:        "Physcomitrium patens Gransden 2004"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTAGGG"
+    size_mb:         480.0
+    has_refseq_gff:  true
+
+  slycopersicum:
+    accession:       "GCF_000188115.5"
+    organism:        "Solanum lycopersicum Heinz 1706 SL4.0"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTAGGG"
+    size_mb:         900.0
+    has_refseq_gff:  true
+
+  gmax:
+    accession:       "GCF_000004515.6"
+    organism:        "Glycine max Williams 82 (soybean)"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTAGGG"
+    size_mb:         978.0
+    has_refseq_gff:  true
+
+  sbicolor:
+    accession:       "GCF_000003195.3"
+    organism:        "Sorghum bicolor BTx623"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTTAGGG"
+    size_mb:         730.0
+    has_refseq_gff:  true
+
   # ── Vertebrates ────────────────────────────────────────────────────────────
   gallus:
     accession:       "GCF_016699485.2"
@@ -240,4 +474,26 @@ genomes:
     trnascan_mode:   "-E"
     telomere_repeat: "TTAGGG"
     size_mb:         3100.0
+    has_refseq_gff:  true
+
+  xtropicalis:
+    accession:       "GCF_000004195.4"
+    organism:        "Xenopus tropicalis UCB_Xtro_10.0"
+    ncbi_group:      vertebrate_other
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         1400.0
+    has_refseq_gff:  true
+
+  acarolinensis:
+    accession:       "GCF_000090745.1"
+    organism:        "Anolis carolinensis AnoCar2.0 (green anole)"
+    ncbi_group:      vertebrate_other
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         1800.0
     has_refseq_gff:  true
