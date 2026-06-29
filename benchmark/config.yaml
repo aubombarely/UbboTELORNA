@@ -85,6 +85,39 @@ genomes:
     size_mb:         12.0
     has_refseq_gff:  true
 
+  ncrassa:
+    accession:       "GCF_000182925.2"
+    organism:        "Neurospora crassa OR74A"
+    ncbi_group:      fungi
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         40.0
+    has_refseq_gff:  true
+
+  cneoformans:
+    accession:       "GCF_000149245.3"
+    organism:        "Cryptococcus neoformans var. grubii H99"
+    ncbi_group:      fungi
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         19.0
+    has_refseq_gff:  true
+
+  afumigatus:
+    accession:       "GCF_000002655.1"
+    organism:        "Aspergillus fumigatus Af293"
+    ncbi_group:      fungi
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "TTAGGG"
+    size_mb:         29.0
+    has_refseq_gff:  true
+
   # ── Invertebrates ─────────────────────────────────────────────────────────
   celegans:
     accession:       "GCF_000002985.6"
