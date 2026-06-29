@@ -84,15 +84,15 @@ genomes:
     size_mb:         3.6
     has_refseq_gff:  true
 
-  scoelicolor:
-    accession:       "GCF_000203835.1"
-    organism:        "Streptomyces coelicolor A3(2)"
+  savermitilis:
+    accession:       "GCF_000009765.2"
+    organism:        "Streptomyces avermitilis MA-4680"
     ncbi_group:      bacteria
     kingdom:         bacteria
     barrnap_kingdom: bac
     trnascan_mode:   "-B"
     telomere_repeat: null          # linear chromosome but terminal proteins, not canonical repeats
-    size_mb:         8.7
+    size_mb:         9.0
     has_refseq_gff:  true
 
   # ── Archaea ────────────────────────────────────────────────────────────────
@@ -175,15 +175,15 @@ genomes:
     has_refseq_gff:  true
 
   # ── Algae ──────────────────────────────────────────────────────────────────
-  creinhardtii:
-    accession:       "GCF_000002595.3"
-    organism:        "Chlamydomonas reinhardtii CC-503"
+  otauri:
+    accession:       "GCF_000214015.3"
+    organism:        "Ostreococcus tauri OTH95"
     ncbi_group:      plant
     kingdom:         euka
     barrnap_kingdom: euk
     trnascan_mode:   "-E"
-    telomere_repeat: "TTTTAGGG"    # 8-mer; Chlorophyta-type; different from plant TTTAGGG
-    size_mb:         111.0
+    telomere_repeat: "auto"        # Mamiellophyceae telomere unit uncertain; let tidk discover
+    size_mb:         13.0
     has_refseq_gff:  true
 
   vcarteri:
@@ -209,7 +209,7 @@ genomes:
     has_refseq_gff:  true
 
   esiliculosus:
-    accession:       "GCF_000310025.1"
+    accession:       "GCA_964200065.2"
     organism:        "Ectocarpus siliculosus Ec32"
     ncbi_group:      protozoa       # Stramenopiles/Phaeophyceae fall under protozoa in ncbi-genome-download
     kingdom:         euka
@@ -321,8 +321,8 @@ genomes:
     has_refseq_gff:  true
 
   cgigas:
-    accession:       "GCF_902806645.1"
-    organism:        "Crassostrea gigas (Pacific oyster)"
+    accession:       "GCF_963853765.1"
+    organism:        "Magallana gigas (Pacific oyster)"
     ncbi_group:      invertebrate
     kingdom:         euka
     barrnap_kingdom: euk
