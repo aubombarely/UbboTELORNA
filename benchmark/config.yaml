@@ -28,7 +28,7 @@ overlap_threshold: 0.80
 
 # ── adversarial robustness test ─────────────────────────────────────────────
 # Genomes used for the adversarial telomere-prefix test.
-adversarial_genomes: ["athaliana", "actinidia"]
+adversarial_genomes: ["athaliana", "ntabacum"]
 # Number of telomere repeat units prepended to each sequence.
 adversarial_n_repeats: 1000
 
@@ -142,17 +142,27 @@ genomes:
     size_mb:         375.0
     has_refseq_gff:  true
 
-  actinidia:
-    accession:       null           # local genome — set fasta_path below
-    fasta_path:      null           # fill in before running: /path/to/actinidia.fasta
-    organism:        "Actinidia arguta"
-    ncbi_group:      null
+  ntabacum:
+    accession:       "GCF_000715075.1"
+    organism:        "Nicotiana tabacum"
+    ncbi_group:      plant
     kingdom:         euka
     barrnap_kingdom: euk
     trnascan_mode:   "-E"
     telomere_repeat: "TTTAGGG"
-    size_mb:         700.0
-    has_refseq_gff:  false         # no RefSeq GFF3 — correctness metrics skipped
+    size_mb:         4500.0        # allotetraploid ~4.5 Gb
+    has_refseq_gff:  true
+
+  csinensis:
+    accession:       "GCF_022201045.2"
+    organism:        "Citrus sinensis (sweet orange)"
+    ncbi_group:      plant
+    kingdom:         euka
+    barrnap_kingdom: euk
+    trnascan_mode:   "-E"
+    telomere_repeat: "auto"        # C. sinensis telomere unit uncertain; let tidk discover
+    size_mb:         360.0
+    has_refseq_gff:  true
 
   maize:
     accession:       "GCF_000005005.2"

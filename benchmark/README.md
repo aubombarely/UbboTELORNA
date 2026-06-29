@@ -1,8 +1,10 @@
 # UbboTELORNA benchmark
 
 This directory contains the reproducible benchmark comparing UbboTELORNA
-against barrnap, tRNAscan-SE, and tidk across 13 genomes spanning all
-major branches of life.
+against barrnap, tRNAscan-SE, and tidk across 14 genomes spanning all
+major branches of life. The plant set includes *Nicotiana tabacum*
+(GCF_000715075.1, allotetraploid ~4.5 Gb) as the large-genome stress test
+and *Citrus sinensis* (GCF_022201045.2, ~360 Mb) for citrus diversity.
 
 See [docs/benchmarking.md](../docs/benchmarking.md) for the full benchmark
 design, genome descriptions, and rationale.
@@ -45,18 +47,12 @@ The final report is written to `results/figures/benchmark_report.pdf`.
 
 ---
 
-## Providing a local genome (Actinidia)
+## Large genome note (Nicotiana tabacum)
 
-Actinidia arguta has no NCBI accession in config.yaml.
-Before running, set the FASTA path:
-
-```yaml
-# config.yaml
-genomes:
-  actinidia:
-    fasta_path: /path/to/actinidia_arguta.fasta
-    ...
-```
+*N. tabacum* (GCF_000715075.1) is an allotetraploid at ~4.5 Gb — the
+largest genome in the benchmark. Allow extra time and memory for the
+download and annotation steps. Consider running it last or on a dedicated
+high-memory node.
 
 ---
 
@@ -106,10 +102,10 @@ benchmark/results/
 snakemake --cores 16 --use-conda \
     $(snakemake --list | grep _rrna_metrics.tsv | tr '\n' ' ')
 
-# Robustness only (Arabidopsis + Actinidia)
+# Robustness only (Arabidopsis + Nicotiana)
 snakemake --cores 16 --use-conda \
     results/robustness/athaliana/robustness_summary.tsv \
-    results/robustness/actinidia/robustness_summary.tsv
+    results/robustness/ntabacum/robustness_summary.tsv
 
 # Performance sweep only
 snakemake --cores 32 --use-conda \
