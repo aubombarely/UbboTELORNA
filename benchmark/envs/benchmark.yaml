@@ -6,7 +6,7 @@ channels:
 dependencies:
   - python>=3.10
   - snakemake>=7.0
-  - ncbi-genome-download   # downloads FASTA + GFF3 from NCBI RefSeq
+  - ncbi-datasets-cli    # official NCBI datasets CLI; replaces ncbi-genome-download (broken on new NCBI summary columns)
   - barrnap                # rRNA comparator
   - trnascan-se            # tRNA comparator
   - tidk                   # telomere comparator (Rust binary via bioconda)

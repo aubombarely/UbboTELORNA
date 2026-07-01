@@ -211,9 +211,9 @@ tRNAscan-SE       Arabidopsis    tRNA       0.99        0.99      0.99      1.1 
 
 ---
 
-## Planned implementation
+## Implementation
 
-The benchmark will live in a dedicated `benchmark/` directory:
+The benchmark lives in the `benchmark/` directory at the repo root:
 
 ```
 benchmark/
@@ -223,14 +223,102 @@ benchmark/
 │   └── benchmark.yaml           conda environment with all comparator tools
 ├── scripts/
 │   ├── download_genomes.py      fetch assemblies and reference GFF3 from NCBI
+│   ├── normalise_gff3.py        harmonise GFF3 attribute names across tools
 │   ├── compare_annotations.py   compute TP/FP/FN vs. reference; write metrics TSV
+│   ├── create_adversarial.py    prepend telomere repeats or fragment assemblies
 │   └── benchmark_report.py      generate comparison figures (matplotlib)
 └── README.md                    quickstart for reproducing the benchmark
 ```
 
-The `compare_annotations.py` script will accept any two GFF3 files
-(predicted vs. reference) and produce a metrics TSV, making it reusable
+The genome set has been expanded to **40 genomes** spanning bacteria, archaea,
+fungi, algae, protozoa, plants, invertebrates, and vertebrates (see
+`benchmark/config.yaml` for the full list with accessions).
+
+The `compare_annotations.py` script accepts any two GFF3 files
+(predicted vs. reference) and produces a metrics TSV, making it reusable
 outside this benchmark.
+
+---
+
+## Setup and quickstart
+
+### Requirements
+
+The benchmark uses two separate conda environments:
+
+| Environment file | Activated by | Contains |
+|---|---|---|
+| `benchmark/envs/benchmark.yaml` → `ubbotelorna_bench` | Snakemake orchestration + comparator tools | snakemake, ncbi-genome-download, barrnap, tRNAscan-SE, tidk, matplotlib, pandas, scipy, seaborn |
+| `envs/UbboTELORNA.yaml` → `ubbotelorna` | UbboTELORNA rules (auto-activated via `--use-conda`) | tantan, hmmer, infernal, aragorn, codecarbon |
+
+### Step 1 — Create the benchmark environment
+
+```bash
+cd /path/to/UbboTELORNA/benchmark
+conda env create -f envs/benchmark.yaml
+conda activate ubbotelorna_bench
+```
+
+The `ubbotelorna` environment will be created automatically the first time
+Snakemake runs any UbboTELORNA rule. To pre-create it manually:
+
+```bash
+conda env create -f ../envs/UbboTELORNA.yaml
+```
+
+### Step 2 — Dry run (verify the DAG before downloading)
+
+```bash
+snakemake --cores 8 --use-conda -n --quiet
+```
+
+This prints the list of jobs without executing anything. Fix any config
+errors before proceeding.
+
+### Step 3 — Download all 40 genomes
+
+```bash
+snakemake --cores 4 --use-conda download_all
+```
+
+This fetches FASTA and reference GFF3 for every genome via
+`ncbi-genome-download`. Expect ~10–30 GB of downloads depending on which
+genomes are included. Large plant genomes (tobacco, maize) dominate the
+download size.
+
+### Step 4 — Run the full benchmark
+
+```bash
+snakemake --cores 32 --use-conda all
+```
+
+Adjust `--cores` to the number of threads available on your machine.
+The `default_threads` value in `config.yaml` controls how many threads
+each individual tool invocation uses; the Snakemake `--cores` value
+controls how many jobs run in parallel.
+
+### Running a single genome or rule
+
+```bash
+# Single genome — rRNA correctness only
+snakemake --cores 8 --use-conda \
+    results/metrics/athaliana/ubbotelorna_nhmmer_rrna_metrics.tsv
+
+# Single rule across all genomes
+snakemake --cores 16 --use-conda compare_rrna_ubbotelorna_nhmmer
+```
+
+### Output layout
+
+```
+benchmark/results/
+├── genomes/           downloaded FASTA + reference GFF3 (one dir per genome)
+├── annotations/       raw tool outputs (one subdir per tool per genome)
+├── metrics/           correctness TSVs (one subdir per genome)
+├── robustness/        adversarial + fragmented assembly results
+├── performance/       thread-sweep benchmark TSVs
+└── figures/           benchmark_report.pdf / .png (final report)
+```
 
 ---
 
