@@ -153,7 +153,7 @@ genomes:
     has_refseq_gff:  true
 
   cneoformans:
-    accession:       "GCF_000149245.3"
+    accession:       "GCF_000149245.1"
     organism:        "Cryptococcus neoformans var. grubii H99"
     ncbi_group:      fungi
     kingdom:         euka
@@ -198,7 +198,7 @@ genomes:
     has_refseq_gff:  true
 
   cmerolae:
-    accession:       "GCF_000209535.1"
+    accession:       "GCF_000091205.1"
     organism:        "Cyanidioschyzon merolae 10D"
     ncbi_group:      plant
     kingdom:         euka
@@ -232,7 +232,7 @@ genomes:
     has_refseq_gff:  true
 
   tbrucei:
-    accession:       "GCF_000002365.2"
+    accession:       "GCF_000002445.2"
     organism:        "Trypanosoma brucei TREU927"
     ncbi_group:      protozoa
     kingdom:         euka
@@ -277,7 +277,7 @@ genomes:
     has_refseq_gff:  true
 
   hmelpomene:
-    accession:       "GCF_000313835.2"
+    accession:       "GCF_056956725.1"
     organism:        "Heliconius melpomene (postman butterfly)"
     ncbi_group:      invertebrate
     kingdom:         euka
