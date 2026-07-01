@@ -75,6 +75,15 @@ def download(accession: str, outdir: Path, genome: str) -> None:
             )
             sys.exit(1)
 
+        if not zip_path.exists() or zip_path.stat().st_size == 0:
+            print(
+                f"ERROR: datasets returned success but wrote no zip file for {accession}.\n"
+                f"       The assembly record may exist but have no downloadable data.\n"
+                f"       Check: datasets summary genome accession {accession}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
         extract_dir = Path(tmpdir) / "extracted"
         extract_dir.mkdir()
         with zipfile.ZipFile(zip_path) as zf:
@@ -88,7 +97,10 @@ def download(accession: str, outdir: Path, genome: str) -> None:
             candidates = sorted(data_root.glob("GC*"))
             if not candidates:
                 print(
-                    f"ERROR: no data directory found under {data_root}",
+                    f"ERROR: datasets zip for {accession} contained no genome data.\n"
+                    f"       The assembly may be suppressed or not packaged for download.\n"
+                    f"       Find a replacement with:\n"
+                    f"         datasets summary genome taxon '<organism>' --reference",
                     file=sys.stderr,
                 )
                 sys.exit(1)

@@ -333,7 +333,7 @@ genomes:
 
   # ── Plants ─────────────────────────────────────────────────────────────────
   smoellendorffii:
-    accession:       "GCF_000143415.1"
+    accession:       "GCF_000143415.4"
     organism:        "Selaginella moellendorffii v1.0"
     ncbi_group:      plant
     kingdom:         euka
