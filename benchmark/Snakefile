@@ -246,30 +246,49 @@ rule run_tidk:
     conda:
         "envs/benchmark.yaml"
     run:
-        import subprocess, shutil
+        import subprocess, shutil, os
         rep = params.repeat
+        os.makedirs(params.outdir, exist_ok=True)
         if rep == "auto":
-            # explore phase: let tidk find the best repeat
+            # explore now writes to stdout (no --output/--dir/--prefix flags)
             r = subprocess.run(
-                ["tidk", "explore", "--fasta", input.fasta,
-                 "--output", params.outdir, "--prefix", params.prefix],
+                ["tidk", "explore", input.fasta],
                 capture_output=True, text=True
             )
             with open(log[0], "w") as fh:
                 fh.write(r.stdout + r.stderr)
-            # pick top-ranked repeat from explore output
-            explore_out = f"{params.outdir}/{params.prefix}_telomeric_repeat_windows.tsv"
-            with open(explore_out) as fh:
-                next(fh)  # header
-                rep = next(fh).split("\t")[0]
-        subprocess.run(
-            ["tidk", "search", "--fasta", input.fasta,
+            if r.returncode != 0:
+                raise RuntimeError(f"tidk explore failed:\n{r.stderr}")
+            # stdout: header line then data rows; first column is the kmer sequence
+            # pick first row whose first column contains only ACGT characters
+            rep = None
+            for line in r.stdout.splitlines():
+                cols = line.strip().split("\t")
+                if cols and cols[0] and all(c in "ACGTacgt" for c in cols[0]):
+                    rep = cols[0].upper()
+                    break
+            if rep is None:
+                raise RuntimeError(
+                    f"tidk explore found no telomeric repeat in {input.fasta}.\n"
+                    f"stdout:\n{r.stdout}"
+                )
+        else:
+            open(log[0], "w").close()  # create empty log for non-auto path
+        # search: FASTA is now positional; --output is filename prefix; --dir is directory
+        r2 = subprocess.run(
+            ["tidk", "search",
              "--string", rep,
-             "--output", params.outdir, "--prefix", params.prefix],
-            check=True, capture_output=True, text=True
+             "--output", params.prefix,
+             "--dir",    params.outdir,
+             input.fasta],
+            capture_output=True, text=True
         )
-        shutil.copy(f"{params.outdir}/{params.prefix}_telomeric_repeat_windows.tsv",
-                    output.tsv)
+        with open(log[0], "a") as fh:
+            fh.write(r2.stdout + r2.stderr)
+        if r2.returncode != 0:
+            raise RuntimeError(f"tidk search failed:\n{r2.stderr}")
+        # new output path: {outdir}/{prefix}.tsv (no longer *_telomeric_repeat_windows.tsv)
+        shutil.copy(f"{params.outdir}/{params.prefix}.tsv", output.tsv)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
