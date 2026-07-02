@@ -719,7 +719,8 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
         tool     = _require_tool("nhmmer")
         _run([
             tool,
-            "--cpu",    str(threads),
+            "--dna",                # force DNA alphabet — avoids 'Unable to guess alphabet'
+            "--cpu",    str(threads),  # when hard-masked FASTA starts with long N-runs
             "--tblout", str(tblout),
             "-E",       str(evalue),
             "--noali",
