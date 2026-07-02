@@ -236,7 +236,7 @@ rule run_tidk:
     input:
         fasta = genome_fasta,
     output:
-        tsv = "{res}/annotations/{genome}/tidk/{genome}_telomere.tsv",
+        tsv = "{res}/annotations/{genome}/tidk/{genome}_telomeric_repeat_windows.tsv",
     params:
         repeat = lambda wc: config["genomes"][wc.genome]["telomere_repeat"],
         outdir = "{res}/annotations/{genome}/tidk",
@@ -250,9 +250,10 @@ rule run_tidk:
         rep = params.repeat
         os.makedirs(params.outdir, exist_ok=True)
         if rep == "auto":
-            # explore now writes to stdout (no --output/--dir/--prefix flags)
+            # explore now writes to stdout; --minimum/--maximum must be
+            # passed explicitly even though they have defaults in newer tidk
             r = subprocess.run(
-                ["tidk", "explore", input.fasta],
+                ["tidk", "explore", "--minimum", "5", "--maximum", "12", input.fasta],
                 capture_output=True, text=True
             )
             with open(log[0], "w") as fh:
@@ -287,7 +288,6 @@ rule run_tidk:
             fh.write(r2.stdout + r2.stderr)
         if r2.returncode != 0:
             raise RuntimeError(f"tidk search failed:\n{r2.stderr}")
-        shutil.copy(f"{params.outdir}/{params.prefix}_telomeric_repeat_windows.tsv", output.tsv)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -412,7 +412,7 @@ rule compare_trna_trnascan:
 rule compare_telomeres:
     input:
         ubbo = "{res}/annotations/{genome}/ubbotelorna_nhmmer/{genome}.gff3",
-        tidk = "{res}/annotations/{genome}/tidk/{genome}_telomere.tsv",
+        tidk = "{res}/annotations/{genome}/tidk/{genome}_telomeric_repeat_windows.tsv",
     output:
         tsv = "{res}/metrics/{genome}/telomere_comparison.tsv",
     params:
