@@ -287,8 +287,7 @@ rule run_tidk:
             fh.write(r2.stdout + r2.stderr)
         if r2.returncode != 0:
             raise RuntimeError(f"tidk search failed:\n{r2.stderr}")
-        # new output path: {outdir}/{prefix}.tsv (no longer *_telomeric_repeat_windows.tsv)
-        shutil.copy(f"{params.outdir}/{params.prefix}.tsv", output.tsv)
+        shutil.copy(f"{params.outdir}/{params.prefix}_telomeric_repeat_windows.tsv", output.tsv)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
