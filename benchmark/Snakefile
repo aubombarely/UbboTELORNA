@@ -212,7 +212,7 @@ rule run_trnascan:
         "envs/benchmark.yaml"
     shell:
         "tRNAscan-SE {params.mode} --thread {threads} "
-        "  --gff {output.gff3} --summary {output.stats} "
+        "  --gff {output.gff3} -m {output.stats} "
         "  {input.fasta} > {log} 2>&1"
 
 
