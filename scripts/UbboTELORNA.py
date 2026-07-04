@@ -268,6 +268,42 @@ def _write_fasta(records: list[tuple[str, str]], path: Path,
                 fh.write(seq[i:i + line_width] + "\n")
 
 
+def _iter_fasta(path: Path):
+    """Yield (header, sequence) one record at a time — O(1) peak memory per sequence.
+
+    Use instead of _read_fasta when the genome is large and only a single forward
+    pass is needed (e.g. telomere scanning, hard-masking).  Can be iterated more
+    than once by calling _iter_fasta(path) again for each pass.
+    """
+    header = None
+    parts: list = []
+    with open(path) as fh:
+        for line in fh:
+            line = line.rstrip()
+            if line.startswith(">"):
+                if header is not None:
+                    yield header, "".join(parts)
+                header = line[1:].split()[0]
+                parts  = []
+            else:
+                parts.append(line)
+    if header is not None:
+        yield header, "".join(parts)
+
+
+def _write_hard_masked_streaming(soft_fasta: Path, hard_fasta: Path) -> None:
+    """Stream a soft-masked FASTA and write the hard-masked (lowercase → N) version.
+
+    Processes one line at a time so the entire genome is never held in memory.
+    """
+    with open(soft_fasta) as src, open(hard_fasta, "w") as dst:
+        for line in src:
+            if line.startswith(">"):
+                dst.write(line)
+            else:
+                dst.write(re.sub(r"[acgt]", "N", line.rstrip("\n")) + "\n")
+
+
 # ── GFF3 utilities ────────────────────────────────────────────────────────────
 
 _GFF3_HEADER = "##gff-version 3\n"
@@ -361,7 +397,7 @@ def _kmer_density(seq: str, repeat_unit: str) -> float:
     return covered / n
 
 
-def _detect_repeat_unit(seqs: list[tuple[str, str]],
+def _detect_repeat_unit(seqs,
                         window: int,
                         k_range: tuple[int, ...] = (5, 6, 7, 8)) -> str | None:
     """Return the dominant telomere repeat unit from terminal k-mer counts, or None."""
@@ -411,12 +447,14 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
                     return out_gff3, line.split()[-1]
         return out_gff3, repeat_unit
 
-    seqs = _read_fasta(fasta)
-    _log(f"  Loaded {len(seqs)} sequences")
+    # Count sequences with a single cheap pass (no sequence data loaded)
+    n_seqs = sum(1 for line in open(fasta) if line.startswith(">"))
+    _log(f"  Found {n_seqs} sequences")
 
     if repeat_unit is None:
         _log("  Auto-detecting telomere repeat unit …")
-        repeat_unit = _detect_repeat_unit(seqs, tel_window)
+        # Pass 1: streaming auto-detection — one sequence in memory at a time
+        repeat_unit = _detect_repeat_unit(_iter_fasta(fasta), tel_window)
         if repeat_unit is None:
             _log("  WARNING: could not auto-detect repeat unit. "
                  "Provide --telomere_repeat explicitly to enable telomere annotation.")
@@ -430,7 +468,8 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
     records   = []
     tel_count = 0
 
-    for name, seq in seqs:
+    # Pass 2 (or only pass): stream sequences for the telomere scan
+    for name, seq in _iter_fasta(fasta):
         length = len(seq)
         # Scan 5' end
         for end_label, region_seq, offset in [
@@ -503,16 +542,29 @@ def run_module1_masking(fasta: Path, workdir: Path, force: bool) -> Path:
         return masked
 
     tantan = _require_tool("tantan")
-    result = _run([tantan, str(fasta.resolve())], capture_stdout=True)
-    masked.write_text(result.stdout)
+
+    # Stream tantan stdout directly to disk — avoids holding the full genome
+    # as a Python string in result.stdout (which can be 2-3 GB for large genomes).
+    _log(f"  $ {tantan} {fasta.resolve()} > {masked}")
+    with open(masked, "w") as _out_fh:
+        _proc = subprocess.Popen(
+            [tantan, str(fasta.resolve())],
+            stdout=_out_fh,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        _, _stderr = _proc.communicate()
+    if _proc.returncode != 0:
+        print(f"ERROR: tantan failed (exit {_proc.returncode}):\n"
+              f"{_stderr[-3000:]}", file=sys.stderr)
+        sys.exit(1)
     _log(f"  Soft-masked FASTA: {masked.name}")
 
-    # Create hard-masked version (lowercase → N) for search tools
+    # Create hard-masked version (lowercase → N) for search tools.
+    # Uses streaming to avoid a second full-genome load into memory.
     hard = workdir / "masked_hard.fasta"
     _log(f"  Creating hard-masked FASTA for search tools: {hard.name}")
-    recs = _read_fasta(masked)
-    hard_recs = [(name, re.sub(r"[acgt]", "N", seq)) for name, seq in recs]
-    _write_fasta(hard_recs, hard)
+    _write_hard_masked_streaming(masked, hard)
 
     return masked
 
@@ -667,11 +719,63 @@ def _parse_cmsearch_tblout(tblout: Path, evalue: float) -> list[dict]:
     return hits
 
 
+def _run_single_chunk(chunk_records: list, chunk_idx: int,
+                      tool: str, search_tool: str, model_file: Path,
+                      threads: int, evalue: float, mxsize: float,
+                      workdir: Path) -> list:
+    """Write a temporary chunk FASTA, run nhmmer/cmsearch, return parsed hits.
+
+    Temporary files are removed after parsing so workdir does not accumulate
+    per-chunk debris.  The chunk index is zero-padded to four digits so that
+    log messages remain sortable.
+    """
+    chunk_fa  = workdir / f"_chunk_{chunk_idx:04d}.fasta"
+    chunk_tbl = workdir / f"_chunk_{chunk_idx:04d}.tblout"
+    _write_fasta(chunk_records, chunk_fa)
+
+    if search_tool == "nhmmer":
+        _run([
+            tool,
+            "--rna",
+            "--cpu",    str(threads),
+            "--tblout", str(chunk_tbl),
+            "-E",       str(evalue),
+            "--noali",
+            str(model_file),
+            str(chunk_fa.resolve()),
+        ], cwd=workdir)
+        hits = _parse_nhmmer_tblout(chunk_tbl, evalue)
+    else:
+        _run([
+            tool,
+            "--cpu",    str(threads),
+            "--tblout", str(chunk_tbl),
+            "-E",       str(evalue),
+            "--noali",
+            "--rfam",
+            "--mxsize", str(mxsize),
+            str(model_file),
+            str(chunk_fa.resolve()),
+        ], cwd=workdir)
+        hits = _parse_cmsearch_tblout(chunk_tbl, evalue)
+
+    chunk_fa.unlink(missing_ok=True)
+    chunk_tbl.unlink(missing_ok=True)
+    return hits
+
+
 def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
                      rfam_dir: Path | None, mxsize: float, search_tool: str,
                      workdir: Path, results: Path,
-                     prefix: str, force: bool) -> Path:
-    """Run nhmmer (default) or cmsearch and write rRNA GFF3."""
+                     prefix: str, force: bool, chunk_size: int = 200) -> Path:
+    """Run nhmmer (default) or cmsearch and write rRNA GFF3.
+
+    When chunk_size > 0 the genome FASTA is fed to the search tool in batches
+    of chunk_size sequences.  Each batch is written to a temporary file, the
+    tool is invoked, hits are collected, and the temporary file is removed.
+    This keeps the tool's per-run input small and reduces Python-side peak RAM.
+    Set chunk_size=0 to disable chunking (original behaviour).
+    """
     out_gff3  = results / f"mod02_rRNA_{prefix}.gff3"
     tblout    = workdir / f"{search_tool}_rRNA.tblout"
 
@@ -685,32 +789,70 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
     if search_tool == "nhmmer":
         hmm_file = _ensure_hmms(kingdom, rfam_dir)
         tool     = _require_tool("nhmmer")
-        _run([
-            tool,
-            "--rna",                # force RNA alphabet — avoids 'Unable to guess alphabet'
-            "--cpu",    str(threads),  # on N-heavy hard-masked FASTA; RNA is compatible with hmmbuild --rna HMMs
-            "--tblout", str(tblout),
-            "-E",       str(evalue),
-            "--noali",
-            str(hmm_file),
-            str(search_fa.resolve()),
-        ], cwd=workdir)
-        hits = _parse_nhmmer_tblout(tblout, evalue)
     else:
         cm_file  = _ensure_cms(kingdom, rfam_dir)
         tool     = _require_tool("cmsearch")
-        _run([
-            tool,
-            "--cpu",    str(threads),
-            "--tblout", str(tblout),
-            "-E",       str(evalue),
-            "--noali",
-            "--rfam",                   # HMM pre-filter; essential for large genomes
-            "--mxsize", str(mxsize),    # cap DP matrix per thread (Mb)
-            str(cm_file),
-            str(search_fa.resolve()),
-        ], cwd=workdir)
-        hits = _parse_cmsearch_tblout(tblout, evalue)
+    model_file = hmm_file if search_tool == "nhmmer" else cm_file
+
+    if chunk_size > 0:
+        # ── Chunked execution: stream genome, run tool per batch ──────────────
+        _log(f"  Chunked mode: {chunk_size} sequences per chunk")
+        all_hits:     list = []
+        chunk_buf:    list = []
+        chunk_idx          = 0
+        total_seqs         = 0
+
+        for name, seq in _iter_fasta(search_fa):
+            chunk_buf.append((name, seq))
+            total_seqs += 1
+            if len(chunk_buf) >= chunk_size:
+                chunk_idx += 1
+                _log(f"  Processing chunk {chunk_idx} "
+                     f"({len(chunk_buf)} seqs, total so far: {total_seqs})")
+                all_hits.extend(
+                    _run_single_chunk(chunk_buf, chunk_idx, tool, search_tool,
+                                      model_file, threads, evalue, mxsize, workdir)
+                )
+                chunk_buf = []
+
+        if chunk_buf:
+            chunk_idx += 1
+            _log(f"  Processing chunk {chunk_idx} "
+                 f"({len(chunk_buf)} seqs, total: {total_seqs})")
+            all_hits.extend(
+                _run_single_chunk(chunk_buf, chunk_idx, tool, search_tool,
+                                  model_file, threads, evalue, mxsize, workdir)
+            )
+
+        _log(f"  Processed {total_seqs} sequences in {chunk_idx} chunk(s)")
+        hits = all_hits
+    else:
+        # ── Single-run execution (original behaviour) ─────────────────────────
+        if search_tool == "nhmmer":
+            _run([
+                tool,
+                "--rna",                # force RNA alphabet — avoids 'Unable to guess alphabet'
+                "--cpu",    str(threads),  # on N-heavy hard-masked FASTA; RNA is compatible with hmmbuild --rna HMMs
+                "--tblout", str(tblout),
+                "-E",       str(evalue),
+                "--noali",
+                str(model_file),
+                str(search_fa.resolve()),
+            ], cwd=workdir)
+            hits = _parse_nhmmer_tblout(tblout, evalue)
+        else:
+            _run([
+                tool,
+                "--cpu",    str(threads),
+                "--tblout", str(tblout),
+                "-E",       str(evalue),
+                "--noali",
+                "--rfam",                   # HMM pre-filter; essential for large genomes
+                "--mxsize", str(mxsize),    # cap DP matrix per thread (Mb)
+                str(model_file),
+                str(search_fa.resolve()),
+            ], cwd=workdir)
+            hits = _parse_cmsearch_tblout(tblout, evalue)
 
     _log(f"  {search_tool} hits (E ≤ {evalue}): {len(hits)}")
     hits = _sort_hits(hits)
@@ -797,8 +939,6 @@ def run_module3_trna(fasta: Path, workdir: Path, results: Path,
         str(fasta.resolve()),
     ])
 
-    raw_lines = sum(1 for l in open(aragorn_out) if not l.startswith("#") and l.strip())
-    _log(f"  ARAGORN output lines: {raw_lines}")
     hits = _sort_hits(_parse_aragorn(aragorn_out))
     _log(f"  ARAGORN tRNA hits: {len(hits)}")
 
@@ -1827,6 +1967,10 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--sort_sequences", choices=["length", "seqid"], default="length",
                      help="Order sequences in the ideogram: 'length' (longest first) "
                           "or 'seqid' (natural alphabetic/numeric sort); default: length")
+    gen.add_argument("--chunk_size", type=int, default=200,
+                     help="Sequences per chunk fed to nhmmer/cmsearch "
+                          "(default: 200; set to 0 to disable chunking and "
+                          "pass the full genome to the tool in one run)")
     gen.add_argument("--force", action="store_true",
                      help="Rerun all steps even if outputs already exist")
     gen.add_argument("--dry_run", action="store_true",
@@ -1868,6 +2012,7 @@ def main() -> None:
     _log(f"  Output dir  : {run_dir}")
     _log(f"  Kingdom     : {args.kingdom}")
     _log(f"  rRNA tool   : {args.search_tool}")
+    _log(f"  Chunk size  : {args.chunk_size if args.chunk_size > 0 else 'disabled'}")
     _log(f"  Threads     : {args.threads}")
     genome_size = _fasta_total_length(args.fasta)
     _log(f"  Genome size : {genome_size:,} bp")
@@ -1906,7 +2051,10 @@ def main() -> None:
         if 1 not in skip_modules:
             _log("    [1] Low-complexity masking   →  workdir/masked_soft.fasta")
         if 2 not in skip_modules:
-            _log(f"    [2] rRNA annotation ({args.search_tool})  →  results/mod02_rRNA_*.gff3")
+            chunk_desc = (f"chunk_size={args.chunk_size}"
+                          if args.chunk_size > 0 else "no chunking")
+            _log(f"    [2] rRNA annotation ({args.search_tool}, {chunk_desc})"
+                 f"  →  results/mod02_rRNA_*.gff3")
         if 3 not in skip_modules:
             _log("    [3] tRNA annotation          →  results/mod03_tRNA_*.gff3")
         if 4 not in skip_modules:
@@ -1977,6 +2125,7 @@ def main() -> None:
             results     = results,
             prefix      = prefix,
             force       = args.force,
+            chunk_size  = args.chunk_size,
         )
 
     # ── Module 3: tRNA annotation ─────────────────────────────────────────────
