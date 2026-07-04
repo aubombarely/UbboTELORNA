@@ -767,19 +767,16 @@ def _run_single_chunk(chunk_records: list, chunk_idx: int,
 def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
                      rfam_dir: Path | None, mxsize: float, search_tool: str,
                      workdir: Path, results: Path,
-                     prefix: str, force: bool, chunk_size: int = 200) -> Path:
-    """Run nhmmer (default) or cmsearch and write rRNA GFF3.
-
-    When chunk_size > 0 the genome FASTA is fed to the search tool in batches
-    of chunk_size sequences.  Each batch is written to a temporary file, the
-    tool is invoked, hits are collected, and the temporary file is removed.
-    This keeps the tool's per-run input small and reduces Python-side peak RAM.
-    Set chunk_size=0 to disable chunking (original behaviour).
-    """
+                     prefix: str, force: bool, chunk_size: int = 200,
+                     flag_5s_arrays: bool = True, min_5s_copies: int = 5,
+                     max_5s_gap: int = 5000, cap_5s: int = 0) -> Path:
+    """Run nhmmer (default) or cmsearch and write rRNA GFF3."""
     out_gff3  = results / f"mod02_rRNA_{prefix}.gff3"
     tblout    = workdir / f"{search_tool}_rRNA.tblout"
 
     if _checkpoint(out_gff3, f"{search_tool}-rRNA", force):
+        if (flag_5s_arrays or cap_5s > 0) and out_gff3.exists() and out_gff3.stat().st_size > 0:
+            _filter_5s_arrays(out_gff3, prefix, results, min_5s_copies, max_5s_gap, cap_5s, force)
         return out_gff3
 
     search_fa = _hard_masked(workdir)
@@ -873,7 +870,153 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
             ) + "\n")
 
     _log(f"  rRNA GFF3: {out_gff3.name}  ({len(hits)} features)")
+    if (flag_5s_arrays or cap_5s > 0) and out_gff3.exists() and out_gff3.stat().st_size > 0:
+        _filter_5s_arrays(out_gff3, prefix, results, min_5s_copies, max_5s_gap, cap_5s, force)
     return out_gff3
+
+
+# ── 5S rRNA post-filter ───────────────────────────────────────────────────────
+
+def _filter_5s_arrays(gff3_path: Path, prefix: str, results_dir: Path,
+                      min_copies: int, max_gap: int, cap: int, force: bool) -> None:
+    """Flag 5S rRNA tandem array members in GFF3 attributes and optionally cap per-sequence count."""
+    array_tsv = results_dir / f"mod02_5s_arrays_{prefix}.tsv"
+    if _checkpoint(array_tsv, "5S-array-flagging", force):
+        return
+
+    _log("  5S rRNA post-filter: reading GFF3 …")
+    header_lines: list[str] = []
+    feature_rows: list[list[str]] = []
+    with open(gff3_path) as fh:
+        for line in fh:
+            stripped = line.rstrip("\n")
+            if stripped.startswith("#") or not stripped.strip():
+                header_lines.append(stripped)
+                continue
+            cols = stripped.split("\t")
+            if len(cols) < 9:
+                header_lines.append(stripped)
+                continue
+            # Strip any prior array attributes for idempotency on --force re-runs
+            attrs = re.sub(r";?array_member=[^;]+", "", cols[8])
+            attrs = re.sub(r";?array_id=[^;]+", "", attrs)
+            cols[8] = attrs
+            feature_rows.append(cols)
+
+    # Collect 5S hits with their index in feature_rows
+    fives_hits: list[dict] = []
+    for i, cols in enumerate(feature_rows):
+        name_m = re.search(r"Name=([^;]+)", cols[8])
+        name = name_m.group(1).strip() if name_m else ""
+        if name != "5S_rRNA":
+            continue
+        try:
+            start = int(cols[3])
+            end   = int(cols[4])
+        except ValueError:
+            continue
+        score_m = re.search(r"score=([^;]+)", cols[8])
+        score = float(score_m.group(1)) if score_m else 0.0
+        fives_hits.append({
+            "idx":     i,
+            "seqname": cols[0],
+            "start":   start,
+            "end":     end,
+            "score":   score,
+        })
+
+    _log(f"  5S rRNA post-filter: {len(fives_hits)} predictions found")
+
+    # Group by sequence
+    by_seq: dict[str, list] = {}
+    for h in fives_hits:
+        by_seq.setdefault(h["seqname"], []).append(h)
+
+    # Detect arrays and build member map
+    array_records: list[dict] = []
+    member_to_array: dict[int, str] = {}
+    arr_counter = 0
+
+    for seqname in sorted(by_seq.keys(), key=_natural_key):
+        seq_hits = sorted(by_seq[seqname], key=lambda x: x["start"])
+        cluster: list[dict] = [seq_hits[0]]
+        for h in seq_hits[1:]:
+            if h["start"] - cluster[-1]["end"] <= max_gap:
+                cluster.append(h)
+            else:
+                if len(cluster) >= min_copies:
+                    arr_id = f"arr{arr_counter:04d}"
+                    for m in cluster:
+                        member_to_array[m["idx"]] = arr_id
+                    array_records.append({
+                        "array_id": arr_id,
+                        "seqname":  seqname,
+                        "start":    min(m["start"] for m in cluster),
+                        "end":      max(m["end"] for m in cluster),
+                        "n_copies": len(cluster),
+                        "span_bp":  max(m["end"] for m in cluster) - min(m["start"] for m in cluster) + 1,
+                    })
+                    arr_counter += 1
+                cluster = [h]
+        if len(cluster) >= min_copies:
+            arr_id = f"arr{arr_counter:04d}"
+            for m in cluster:
+                member_to_array[m["idx"]] = arr_id
+            array_records.append({
+                "array_id": arr_id,
+                "seqname":  seqname,
+                "start":    min(m["start"] for m in cluster),
+                "end":      max(m["end"] for m in cluster),
+                "n_copies": len(cluster),
+                "span_bp":  max(m["end"] for m in cluster) - min(m["start"] for m in cluster) + 1,
+            })
+            arr_counter += 1
+
+    _log(f"  5S arrays detected: {arr_counter} arrays, "
+         f"{len(member_to_array)} array members flagged")
+
+    # Cap: retain highest-scoring hits per sequence, mark the rest for removal
+    removed_idxs: set[int] = set()
+    if cap > 0:
+        for seqname, seq_hits in by_seq.items():
+            if len(seq_hits) > cap:
+                kept = {h["idx"] for h in sorted(seq_hits, key=lambda x: -x["score"])[:cap]}
+                for h in seq_hits:
+                    if h["idx"] not in kept:
+                        removed_idxs.add(h["idx"])
+        if removed_idxs:
+            _log(f"  --cap_5s {cap}: removing {len(removed_idxs)} low-scoring 5S "
+                 f"predictions (keeping top {cap} per sequence)")
+
+    # Rebuild GFF3: annotate array members, drop capped hits
+    new_rows: list[list[str]] = []
+    for i, cols in enumerate(feature_rows):
+        if i in removed_idxs:
+            continue
+        if i in member_to_array:
+            arr_id = member_to_array[i]
+            cols[8] = cols[8].rstrip(";") + f";array_member=true;array_id={arr_id}"
+        new_rows.append(cols)
+
+    with open(gff3_path, "w") as fh:
+        for h in header_lines:
+            fh.write(h + "\n")
+        for cols in new_rows:
+            fh.write("\t".join(cols) + "\n")
+
+    _log(f"  GFF3 updated: {len(removed_idxs)} removed, "
+         f"{len(member_to_array)} array members annotated  →  {gff3_path.name}")
+
+    # Write array summary TSV sorted by seqname, start
+    array_records.sort(key=lambda a: (_natural_key(a["seqname"]), a["start"]))
+    with open(array_tsv, "w") as fh:
+        fh.write("array_id\tseqname\tstart\tend\tstrand\tn_copies\tspan_bp\n")
+        for a in array_records:
+            fh.write(
+                f"{a['array_id']}\t{a['seqname']}\t{a['start']}\t"
+                f"{a['end']}\t.\t{a['n_copies']}\t{a['span_bp']}\n"
+            )
+    _log(f"  5S array TSV: {array_tsv.name}  ({len(array_records)} arrays)")
 
 
 # ── Module 3: tRNA annotation (ARAGORN) ───────────────────────────────────────
@@ -1948,6 +2091,24 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Max DP matrix size per cmsearch thread in Mb — "
                            "only used with --search_tool cmsearch "
                            "(default: 512)")
+    rrna.add_argument("--flag_5s_arrays", dest="flag_5s_arrays",
+                      action="store_true", default=True,
+                      help="Flag 5S rRNA tandem array members in GFF3 attributes "
+                           "(default: on; use --no_flag_5s_arrays to disable)")
+    rrna.add_argument("--no_flag_5s_arrays", dest="flag_5s_arrays",
+                      action="store_false",
+                      help="Disable 5S tandem array flagging")
+    rrna.add_argument("--5s_array_min_copies", dest="s5_array_min_copies",
+                      type=int, default=5,
+                      help="Minimum consecutive copies to define a 5S array "
+                           "(default: 5)")
+    rrna.add_argument("--5s_array_max_gap", dest="s5_array_max_gap",
+                      type=int, default=5000,
+                      help="Maximum inter-copy gap to define a 5S array, bp "
+                           "(default: 5000)")
+    rrna.add_argument("--cap_5s", type=int, default=0,
+                      help="If >0, cap 5S predictions per sequence to this number, "
+                           "keeping the highest-scoring hits (default: 0 = no cap)")
 
     gen = ap.add_argument_group("General")
     gen.add_argument("--threads", type=int, default=4,
@@ -2114,18 +2275,22 @@ def main() -> None:
     if not _skip(2, "rRNA annotation", rrna_gff):
         _banner("Module 2 — rRNA Annotation")
         rrna_gff = run_module2_rrna(
-            fasta       = args.fasta,
-            kingdom     = args.kingdom,
-            threads     = args.threads,
-            evalue      = args.evalue,
-            rfam_dir    = args.rfam_dir,
-            mxsize      = args.cmsearch_mxsize,
-            search_tool = args.search_tool,
-            workdir     = workdir,
-            results     = results,
-            prefix      = prefix,
-            force       = args.force,
-            chunk_size  = args.chunk_size,
+            fasta            = args.fasta,
+            kingdom          = args.kingdom,
+            threads          = args.threads,
+            evalue           = args.evalue,
+            rfam_dir         = args.rfam_dir,
+            mxsize           = args.cmsearch_mxsize,
+            search_tool      = args.search_tool,
+            workdir          = workdir,
+            results          = results,
+            prefix           = prefix,
+            force            = args.force,
+            chunk_size       = args.chunk_size,
+            flag_5s_arrays   = args.flag_5s_arrays,
+            min_5s_copies    = args.s5_array_min_copies,
+            max_5s_gap       = args.s5_array_max_gap,
+            cap_5s           = args.cap_5s,
         )
 
     # ── Module 3: tRNA annotation ─────────────────────────────────────────────
