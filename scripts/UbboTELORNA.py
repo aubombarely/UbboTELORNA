@@ -283,10 +283,7 @@ def _gff3_length(line: str) -> int:
 
 
 def _gff3_name(line: str) -> str:
-    """Extract the Name= attribute value from a GFF3 data line.
-    Strips any trailing parenthesised anticodon, e.g. tRNA-Phe(GAA) → tRNA-Phe.
-    Returns empty string if Name is absent.
-    """
+    """Extract Name= attribute from a GFF3 line; strips trailing anticodon parentheses."""
     attrs = line.split("\t")[8] if line.count("\t") >= 8 else ""
     for field in attrs.split(";"):
         if field.startswith("Name="):
@@ -296,11 +293,7 @@ def _gff3_name(line: str) -> str:
 
 
 def _gff3_sort_key(line: str) -> tuple:
-    """Natural-sort key for a GFF3 data line: (seqid parts, start).
-
-    Splits the SeqID on digit/non-digit boundaries so that e.g.
-    Chr2 sorts before Chr10 rather than after it.
-    """
+    """Natural-sort key for a GFF3 line: (seqid digit/alpha parts, start)."""
     cols = line.split("\t")
     seqid = cols[0] if cols else ""
     start = int(cols[3]) if len(cols) > 3 and cols[3].isdigit() else 0
@@ -319,8 +312,8 @@ def _sort_hits(hits: list[dict]) -> list[dict]:
 
 
 def _gff3_record(seqname: str, source: str, feature: str,
-                 start: int, end: int, score, strand: str,
-                 frame: str, attrs: dict) -> str:
+                 start: int, end: int, score: float | str,
+                 strand: str, frame: str, attrs: dict) -> str:
     score_str = f"{score:.2f}" if isinstance(score, (int, float)) else "."
     attr_str  = ";".join(f"{k}={v}" for k, v in attrs.items())
     return f"{seqname}\t{source}\t{feature}\t{start}\t{end}\t{score_str}\t{strand}\t{frame}\t{attr_str}"
@@ -328,7 +321,7 @@ def _gff3_record(seqname: str, source: str, feature: str,
 
 # ── Telomere detection helpers ────────────────────────────────────────────────
 
-_COMP = str.maketrans("ACGTacgt", "TGCAtgca")
+_COMP = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
 
 def _revcomp(seq: str) -> str:
@@ -341,7 +334,7 @@ def _canonical(kmer: str) -> str:
     return min(kmer.upper(), rc)
 
 
-def _all_rotations(kmer: str) -> set:
+def _all_rotations(kmer: str) -> set[str]:
     """All cyclic rotations of a k-mer (for repeat density counting)."""
     k = len(kmer)
     ku = kmer.upper()
@@ -369,11 +362,9 @@ def _kmer_density(seq: str, repeat_unit: str) -> float:
 
 
 def _detect_repeat_unit(seqs: list[tuple[str, str]],
-                        window: int, k_range=(5, 6, 7, 8)) -> str | None:
-    """
-    Auto-detect the dominant telomere repeat unit from terminal windows.
-    Returns the canonical k-mer with highest normalized terminal count, or None.
-    """
+                        window: int,
+                        k_range: tuple[int, ...] = (5, 6, 7, 8)) -> str | None:
+    """Return the dominant telomere repeat unit from terminal k-mer counts, or None."""
     terminal_counter: Counter = Counter()
     total_bases = 0
 
@@ -410,10 +401,7 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
                           tel_min_len: int,
                           results: Path, workdir: Path,
                           prefix: str, force: bool) -> tuple[Path, str | None]:
-    """
-    Scan contig ends for telomeric repeats.
-    Returns (gff3_path, repeat_unit_used).
-    """
+    """Scan contig ends for telomeric repeats; return (gff3_path, repeat_unit_used)."""
     out_gff3 = results / f"mod00_telomeres_{prefix}.gff3"
     if _checkpoint(out_gff3, "telomere-scan", force):
         # Try to recover the repeat unit from existing GFF3
@@ -457,8 +445,6 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
             step  = max(1, len(repeat_unit))
             wsize = len(repeat_unit) * 10   # window = 10 repeats wide
             rlen  = len(region_seq)
-            in_tel = False
-            tel_start_rel = 0
 
             densities = []
             for i in range(0, rlen - wsize + 1, step):
@@ -511,10 +497,7 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
 # ── Module 1: Low-complexity masking ─────────────────────────────────────────
 
 def run_module1_masking(fasta: Path, workdir: Path, force: bool) -> Path:
-    """
-    Soft-mask (lowercase) low-complexity regions with tantan.
-    Returns path to masked FASTA.
-    """
+    """Soft-mask low-complexity regions with tantan; return path to masked FASTA."""
     masked = workdir / "masked_soft.fasta"
     if _checkpoint(masked, "tantan-masking", force):
         return masked
@@ -541,10 +524,7 @@ def _hard_masked(workdir: Path) -> Path:
 # ── Module 2: rRNA annotation (Infernal + Rfam) ───────────────────────────────
 
 def _ensure_cms(kingdom: str, rfam_dir: Path | None) -> Path:
-    """
-    Download (if needed) and return path to a concatenated .cm file
-    containing all models for the given kingdom.
-    """
+    """Download (if needed) and return path to a concatenated .cm file for the kingdom."""
     cache = rfam_dir or _DEFAULT_CACHE
     cache.mkdir(parents=True, exist_ok=True)
 
@@ -577,12 +557,7 @@ def _ensure_cms(kingdom: str, rfam_dir: Path | None) -> Path:
 
 
 def _ensure_hmms(kingdom: str, rfam_dir: Path | None) -> Path:
-    """
-    Build (if needed) and return path to a concatenated HMMER3 .hmm file for
-    the given kingdom.  Strategy: download the Rfam seed Stockholm alignment
-    for each family and build an HMM with hmmbuild.  The Rfam REST API does
-    not expose standalone .hmm files, but the Stockholm endpoint is stable.
-    """
+    """Build (if needed) and return path to a concatenated HMMER3 .hmm file for the kingdom."""
     cache = rfam_dir or _DEFAULT_CACHE
     cache.mkdir(parents=True, exist_ok=True)
 
@@ -623,14 +598,7 @@ def _ensure_hmms(kingdom: str, rfam_dir: Path | None) -> Path:
 
 
 def _parse_nhmmer_tblout(tblout: Path, evalue: float) -> list[dict]:
-    """Parse nhmmer --tblout output into a list of hit dicts.
-
-    nhmmer tblout columns (whitespace-separated):
-      0  target name   1  target acc   2  query name   3  query acc
-      4  hmmfrom       5  hmmto        6  alifrom      7  alito
-      8  envfrom       9  envto        10 sq len       11 strand
-      12 E-value       13 score        14 bias         15+ description
-    """
+    """Parse nhmmer --tblout into a list of hit dicts, filtering by evalue."""
     hits = []
     with open(tblout) as fh:
         for line in fh:
@@ -853,27 +821,14 @@ def run_module3_trna(fasta: Path, workdir: Path, results: Path,
 
 # ── Module 4: Integration ─────────────────────────────────────────────────────
 
-def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
+def _collect_and_write_gff3(tel_gff: Path | None, rrna_gff: Path | None,
                              trna_gff: Path | None,
-                             results: Path, prefix: str,
-                             genome_size: int = 0) -> tuple[Path, dict]:
-    """Merge GFF3 files, sort by position, and write a detailed summary TSV.
-
-    Returns (combined_gff3_path, counts_dict) where counts_dict has keys
-    n_tel, n_rrna, n_trna, rrna_by_type {name: count}, trna_by_type {name: count},
-    tel_by_end {5prime: n, 3prime: n}.
-    """
-    from collections import Counter
-
-    combined = results / f"mod04_annotation_{prefix}.gff3"
-    summary  = results / f"mod04_summary_{prefix}.tsv"
-
-    # ── Collect and sort all feature lines ────────────────────────────────────
+                             combined_path: Path) -> tuple[list, list, list]:
+    """Read three GFF3 files, sort by position, write combined; return (tel, rrna, trna) lines."""
     all_lines: list[str] = []
     tel_lines:  list[str] = []
     rrna_lines: list[str] = []
     trna_lines: list[str] = []
-
     for gff, bucket in [
         (tel_gff,  tel_lines),
         (rrna_gff, rrna_lines),
@@ -884,15 +839,25 @@ def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
         lines = [l for l in open(gff) if not l.startswith("#") and l.strip()]
         bucket.extend(lines)
         all_lines.extend(lines)
-
     all_lines.sort(key=_gff3_sort_key)
-
-    with open(combined, "w") as out:
+    with open(combined_path, "w") as out:
         out.write(_GFF3_HEADER)
         for line in all_lines:
             out.write(line if line.endswith("\n") else line + "\n")
+    _log(f"  Combined GFF3: {combined_path.name}")
+    return tel_lines, rrna_lines, trna_lines
 
-    _log(f"  Combined GFF3: {combined.name}")
+
+def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
+                             trna_gff: Path | None,
+                             results: Path, prefix: str,
+                             genome_size: int = 0) -> tuple[Path, dict]:
+    """Merge GFF3 files, sort by position, write summary TSV; return (combined_path, counts_dict)."""
+    combined = results / f"mod04_annotation_{prefix}.gff3"
+    summary  = results / f"mod04_summary_{prefix}.tsv"
+
+    tel_lines, rrna_lines, trna_lines = _collect_and_write_gff3(
+        tel_gff, rrna_gff, trna_gff, combined)
 
     # ── Count subtypes and accumulate lengths ──────────────────────────────────
     n_tel  = len(tel_lines)
@@ -935,12 +900,6 @@ def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
         return "NA"
 
     # ── Write detailed summary TSV ─────────────────────────────────────────────
-    _RRNA_ORDER = [
-        "5S_rRNA", "5_8S_rRNA",
-        "SSU_rRNA_eukarya", "SSU_rRNA_bacteria", "SSU_rRNA_archaea",
-        "LSU_rRNA_eukarya", "LSU_rRNA_bacteria", "LSU_rRNA_archaea",
-    ]
-
     with open(summary, "w") as fh:
         fh.write("feature_type\tsubtype\tcount\ttotal_length_bp\tpct_genome\n")
 
@@ -1018,6 +977,152 @@ def _natural_key(s: str) -> list:
     return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", s)]
 
 
+def _draw_ideogram(ax: plt.Axes, top_seqs: list[tuple[str, int]],
+                   tel_pos: dict, rrna_pos: dict, trna_pos: dict,
+                   max_len: int, n_seqs: int, seq_lengths: dict,
+                   prefix: str, sort_by: str) -> None:
+    """Draw genome ideogram panel showing feature positions per sequence."""
+    bar_h   = 0.65
+    tel_h   = bar_h + 0.30
+    min_vis = max_len * 0.002
+    tel_min = max_len * 0.005
+
+    n_rrna_total = sum(len(v) for v in rrna_pos.values())
+    n_trna_total = sum(len(v) for v in trna_pos.values())
+    n_tel_total  = sum(len(v) for v in tel_pos.values())
+
+    layers = sorted([
+        ("rrna", n_rrna_total, _C_RRNA, 0.40, bar_h),
+        ("trna", n_trna_total, _C_TRNA, 0.60, bar_h),
+        ("tel",  n_tel_total,  _C_TEL,  1.00, tel_h),
+    ], key=lambda x: -x[1])
+
+    for i, (name, slen) in enumerate(top_seqs):
+        y = n_seqs - i - 1
+        ax.broken_barh([(0, slen)], (y - bar_h / 2, bar_h),
+                       facecolors=_C_OTHER, alpha=0.18, linewidth=0)
+        for layer_name, _, color, alpha, height in layers:
+            if layer_name == "rrna":
+                pos_list = rrna_pos.get(name, [])
+                mv = min_vis
+            elif layer_name == "trna":
+                pos_list = trna_pos.get(name, [])
+                mv = min_vis
+            else:
+                pos_list = tel_pos.get(name, [])
+                mv = tel_min
+            segs = [(s - 1, max(e - s + 1, mv)) for s, e in pos_list]
+            if segs:
+                ax.broken_barh(segs, (y - height / 2, height),
+                               facecolors=color, alpha=alpha, linewidth=0)
+
+    ax.set_ylim(-0.8, n_seqs - 0.2)
+    ax.set_yticks(range(n_seqs))
+    ax.set_yticklabels([n for n, _ in reversed(top_seqs)], fontsize=8)
+    ax.set_xlim(0, max_len * 1.01)
+    ax.xaxis.set_major_formatter(
+        mticker.FuncFormatter(lambda x, _: f"{x / 1e6:.0f} Mb"))
+    ax.set_xlabel("Genomic position")
+    sort_label = "by SeqID" if sort_by == "seqid" else "longest first"
+    title_suffix = (f"top {n_seqs} of {len(seq_lengths)} sequences, {sort_label}"
+                    if n_seqs < len(seq_lengths)
+                    else f"{n_seqs} sequences, {sort_label}")
+    ax.set_title(f"{prefix}  —  genome annotation overview  ({title_suffix})",
+                 fontsize=11, pad=8)
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    ax.tick_params(left=False)
+    legend_patches = [
+        mpatches.Patch(color=_C_TEL,  label=f"Telomere (n={n_tel_total:,})"),
+        mpatches.Patch(color=_C_RRNA, alpha=0.40, label=f"rRNA (n={n_rrna_total:,})"),
+        mpatches.Patch(color=_C_TRNA, alpha=0.60, label=f"tRNA (n={n_trna_total:,})"),
+    ]
+    ax.legend(handles=legend_patches, loc="lower right",
+              frameon=True, framealpha=0.85, fontsize=9)
+
+
+def _draw_rrna_bars(ax: plt.Axes, summ: dict) -> None:
+    """Draw horizontal bar chart of rRNA subtype counts."""
+    rrna_data = summ.get("rRNA", {})
+    rrna_sub  = [(rt, rrna_data[rt][0]) for rt in _RRNA_ORDER if rt in rrna_data]
+    if not rrna_sub:
+        rrna_sub = sorted([(k, v[0]) for k, v in rrna_data.items() if k != "TOTAL"],
+                          key=lambda x: -x[1])
+    if rrna_sub:
+        lbls, vals = zip(*rrna_sub)
+        yp = list(range(len(lbls)))
+        ax.barh(yp, vals, color=_C_RRNA, linewidth=0)
+        ax.set_yticks(yp)
+        ax.set_yticklabels(lbls, fontsize=9)
+        ax.set_xlabel("Count")
+        ax.xaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+        for j, v in enumerate(vals):
+            ax.text(v + max(vals) * 0.01, j, f"{v:,}", va="center", fontsize=8)
+        ax.set_xlim(right=max(vals) * 1.18)
+    else:
+        ax.text(0.5, 0.5, "No rRNA data", ha="center", va="center",
+                transform=ax.transAxes, color=_C_OTHER)
+    ax.set_title("rRNA subtypes")
+    ax.spines[["top", "right"]].set_visible(False)
+
+
+def _draw_trna_bars(ax: plt.Axes, summ: dict) -> None:
+    """Draw horizontal bar chart of tRNA type counts (top 20)."""
+    trna_data = summ.get("tRNA", {})
+    trna_sub  = sorted([(k, v[0]) for k, v in trna_data.items() if k != "TOTAL"],
+                       key=lambda x: (-x[1], x[0]))[:20]
+    if trna_sub:
+        lbls, vals = zip(*trna_sub)
+        yp = list(range(len(lbls)))
+        ax.barh(yp, vals, color=_C_TRNA, linewidth=0)
+        ax.set_yticks(yp)
+        ax.set_yticklabels(lbls, fontsize=9)
+        ax.set_xlabel("Count")
+        ax.xaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+        for j, v in enumerate(vals):
+            ax.text(v + max(vals) * 0.01, j, f"{v:,}", va="center", fontsize=8)
+        ax.set_xlim(right=max(vals) * 1.18)
+    else:
+        ax.text(0.5, 0.5, "No tRNA data", ha="center", va="center",
+                transform=ax.transAxes, color=_C_OTHER)
+    ax.set_title("tRNA types (top 20)")
+    ax.spines[["top", "right"]].set_visible(False)
+
+
+def _draw_donut(ax: plt.Axes, summ: dict, genome_size: int) -> None:
+    """Draw genome composition donut chart."""
+    tel_bp   = summ.get("telomere", {}).get("TOTAL", (0, 0))[1]
+    rrna_bp  = summ.get("rRNA",     {}).get("TOTAL", (0, 0))[1]
+    trna_bp  = summ.get("tRNA",     {}).get("TOTAL", (0, 0))[1]
+    other_bp = max(0, genome_size - tel_bp - rrna_bp - trna_bp)
+    slices = [(v, l, c) for v, l, c in [
+        (tel_bp,   "Telomere", _C_TEL),
+        (rrna_bp,  "rRNA",     _C_RRNA),
+        (trna_bp,  "tRNA",     _C_TRNA),
+        (other_bp, "Other",    _C_OTHER),
+    ] if v > 0]
+    if slices and genome_size > 0:
+        vals, lbls, cols = zip(*slices)
+        wedges, _ = ax.pie(
+            vals, colors=cols,
+            wedgeprops=dict(width=0.45, edgecolor="white", linewidth=1.5),
+            startangle=90,
+        )
+        ax.text(0, 0, f"{genome_size / 1e6:.0f} Mb",
+                ha="center", va="center", fontsize=10, fontweight="bold")
+        ax.legend(
+            wedges,
+            [f"{l}  {v / genome_size * 100:.3f}%" for v, l in zip(vals, lbls)],
+            loc="lower center", bbox_to_anchor=(0.5, -0.18),
+            frameon=False, fontsize=8, ncol=2,
+        )
+    else:
+        ax.text(0.5, 0.5, "No data", ha="center", va="center",
+                transform=ax.transAxes, color=_C_OTHER)
+    ax.set_title("Genome composition")
+
+
 def run_module5_plot(fasta: Path,
                      tel_gff: Path | None, rrna_gff: Path | None,
                      trna_gff: Path | None, summary_tsv: Path | None,
@@ -1025,20 +1130,17 @@ def run_module5_plot(fasta: Path,
                      plot_formats: list, top_sequences: int,
                      sort_by: str, force: bool) -> None:
     """Generate 3-panel figure: ideogram, subtype bars, composition donut."""
-
     out_base  = results / f"mod05_plot_{prefix}"
     out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
     if _checkpoint(out_paths[0], "visualization", force):
         return
 
-    # ── Load data ──────────────────────────────────────────────────────────────
     seq_lengths = _fasta_seq_lengths(fasta)
     tel_pos     = _parse_gff3_positions(tel_gff)
     rrna_pos    = _parse_gff3_positions(rrna_gff)
     trna_pos    = _parse_gff3_positions(trna_gff)
     summ        = _parse_summary_tsv(summary_tsv)
 
-    # Select and sort top N sequences
     if sort_by == "seqid":
         top_seqs = sorted(seq_lengths.items(), key=lambda x: _natural_key(x[0]))[:top_sequences]
     else:
@@ -1053,8 +1155,7 @@ def run_module5_plot(fasta: Path,
     _log(f"  Plotting {n_seqs} sequences, sorted by {sort_by} "
          f"(longest: {max_len:,} bp)")
 
-    # ── Figure layout ──────────────────────────────────────────────────────────
-    ideo_h = max(4, min(n_seqs * 0.28, 14))   # scale height with seq count
+    ideo_h = max(4, min(n_seqs * 0.28, 14))
     fig    = plt.figure(figsize=(18, ideo_h + 5))
     gs     = GridSpec(2, 3, figure=fig,
                       height_ratios=[ideo_h, 4.5],
@@ -1064,154 +1165,12 @@ def run_module5_plot(fasta: Path,
     ax_trna  = fig.add_subplot(gs[1, 1])
     ax_donut = fig.add_subplot(gs[1, 2])
 
-    # ── Panel 1: Genome ideogram ───────────────────────────────────────────────
-    bar_h   = 0.65
-    tel_h   = bar_h + 0.30          # telomeres drawn taller so they stand out
-    min_vis = max_len * 0.002       # 0.2 % of longest seq — minimum visible width
-    tel_min = max_len * 0.005       # 0.5 % — telomeres get a wider minimum
+    _draw_ideogram(ax_ideo, top_seqs, tel_pos, rrna_pos, trna_pos,
+                   max_len, n_seqs, seq_lengths, prefix, sort_by)
+    _draw_rrna_bars(ax_rrna, summ)
+    _draw_trna_bars(ax_trna, summ)
+    _draw_donut(ax_donut, summ, genome_size)
 
-    # Count total features per type to decide draw order (most abundant = first/bottom)
-    n_rrna_total = sum(len(v) for v in rrna_pos.values())
-    n_trna_total = sum(len(v) for v in trna_pos.values())
-    n_tel_total  = sum(len(v) for v in tel_pos.values())
-
-    # Sort layers: most abundant drawn first (bottom), rarest drawn last (top)
-    layers = sorted([
-        ("rrna", n_rrna_total, _C_RRNA, 0.40, bar_h),
-        ("trna", n_trna_total, _C_TRNA, 0.60, bar_h),
-        ("tel",  n_tel_total,  _C_TEL,  1.00, tel_h),
-    ], key=lambda x: -x[1])    # descending count → bottom to top
-
-    for i, (name, slen) in enumerate(top_seqs):
-        y = n_seqs - i - 1
-
-        # Sequence bar (grey background)
-        ax_ideo.broken_barh([(0, slen)], (y - bar_h / 2, bar_h),
-                            facecolors=_C_OTHER, alpha=0.18, linewidth=0)
-
-        for layer_name, _, color, alpha, height in layers:
-            if layer_name == "rrna":
-                pos_list = rrna_pos.get(name, [])
-                mv = min_vis
-            elif layer_name == "trna":
-                pos_list = trna_pos.get(name, [])
-                mv = min_vis
-            else:
-                pos_list = tel_pos.get(name, [])
-                mv = tel_min
-            segs = [(s - 1, max(e - s + 1, mv)) for s, e in pos_list]
-            if segs:
-                ax_ideo.broken_barh(segs, (y - height / 2, height),
-                                    facecolors=color, alpha=alpha, linewidth=0)
-
-    ax_ideo.set_ylim(-0.8, n_seqs - 0.2)
-    ax_ideo.set_yticks(range(n_seqs))
-    ax_ideo.set_yticklabels([n for n, _ in reversed(top_seqs)], fontsize=8)
-    ax_ideo.set_xlim(0, max_len * 1.01)
-    ax_ideo.xaxis.set_major_formatter(
-        mticker.FuncFormatter(lambda x, _: f"{x / 1e6:.0f} Mb"))
-    ax_ideo.set_xlabel("Genomic position")
-    sort_label = "by SeqID" if sort_by == "seqid" else "longest first"
-    title_suffix = (f"top {n_seqs} of {len(seq_lengths)} sequences, {sort_label}"
-                    if n_seqs < len(seq_lengths)
-                    else f"{n_seqs} sequences, {sort_label}")
-    ax_ideo.set_title(f"{prefix}  —  genome annotation overview  ({title_suffix})",
-                      fontsize=11, pad=8)
-    ax_ideo.spines[["top", "right", "left"]].set_visible(False)
-    ax_ideo.tick_params(left=False)
-
-    legend_patches = [
-        mpatches.Patch(color=_C_TEL,  label=f"Telomere (n={n_tel_total:,})"),
-        mpatches.Patch(color=_C_RRNA, alpha=0.40, label=f"rRNA (n={n_rrna_total:,})"),
-        mpatches.Patch(color=_C_TRNA, alpha=0.60, label=f"tRNA (n={n_trna_total:,})"),
-    ]
-    ax_ideo.legend(handles=legend_patches, loc="lower right",
-                   frameon=True, framealpha=0.85, fontsize=9)
-
-    # ── Panel 2: rRNA subtype bars ─────────────────────────────────────────────
-    rrna_data = summ.get("rRNA", {})
-    rrna_sub  = [(rt, rrna_data[rt][0]) for rt in _RRNA_ORDER if rt in rrna_data]
-    if not rrna_sub:   # fallback: any subtypes not in the standard list
-        rrna_sub = sorted([(k, v[0]) for k, v in rrna_data.items() if k != "TOTAL"],
-                           key=lambda x: -x[1])
-
-    if rrna_sub:
-        lbls, vals = zip(*rrna_sub)
-        yp = list(range(len(lbls)))
-        ax_rrna.barh(yp, vals, color=_C_RRNA, linewidth=0)
-        ax_rrna.set_yticks(yp)
-        ax_rrna.set_yticklabels(lbls, fontsize=9)
-        ax_rrna.set_xlabel("Count")
-        ax_rrna.xaxis.set_major_formatter(
-            mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
-        for j, v in enumerate(vals):
-            ax_rrna.text(v + max(vals) * 0.01, j, f"{v:,}",
-                         va="center", fontsize=8)
-        ax_rrna.set_xlim(right=max(vals) * 1.18)
-    else:
-        ax_rrna.text(0.5, 0.5, "No rRNA data", ha="center", va="center",
-                     transform=ax_rrna.transAxes, color=_C_OTHER)
-    ax_rrna.set_title("rRNA subtypes")
-    ax_rrna.spines[["top", "right"]].set_visible(False)
-
-    # ── Panel 3: tRNA type bars (top 20) ──────────────────────────────────────
-    trna_data = summ.get("tRNA", {})
-    trna_sub  = sorted([(k, v[0]) for k, v in trna_data.items() if k != "TOTAL"],
-                        key=lambda x: (-x[1], x[0]))[:20]
-
-    if trna_sub:
-        lbls, vals = zip(*trna_sub)
-        yp = list(range(len(lbls)))
-        ax_trna.barh(yp, vals, color=_C_TRNA, linewidth=0)
-        ax_trna.set_yticks(yp)
-        ax_trna.set_yticklabels(lbls, fontsize=9)
-        ax_trna.set_xlabel("Count")
-        ax_trna.xaxis.set_major_formatter(
-            mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
-        for j, v in enumerate(vals):
-            ax_trna.text(v + max(vals) * 0.01, j, f"{v:,}",
-                         va="center", fontsize=8)
-        ax_trna.set_xlim(right=max(vals) * 1.18)
-    else:
-        ax_trna.text(0.5, 0.5, "No tRNA data", ha="center", va="center",
-                     transform=ax_trna.transAxes, color=_C_OTHER)
-    ax_trna.set_title("tRNA types (top 20)")
-    ax_trna.spines[["top", "right"]].set_visible(False)
-
-    # ── Panel 4: Genome composition donut ─────────────────────────────────────
-    tel_bp   = summ.get("telomere", {}).get("TOTAL", (0, 0))[1]
-    rrna_bp  = summ.get("rRNA",     {}).get("TOTAL", (0, 0))[1]
-    trna_bp  = summ.get("tRNA",     {}).get("TOTAL", (0, 0))[1]
-    other_bp = max(0, genome_size - tel_bp - rrna_bp - trna_bp)
-
-    slices = [(v, l, c) for v, l, c in [
-        (tel_bp,   "Telomere", _C_TEL),
-        (rrna_bp,  "rRNA",     _C_RRNA),
-        (trna_bp,  "tRNA",     _C_TRNA),
-        (other_bp, "Other",    _C_OTHER),
-    ] if v > 0]
-
-    if slices and genome_size > 0:
-        vals, lbls, cols = zip(*slices)
-        wedges, _ = ax_donut.pie(
-            vals, colors=cols,
-            wedgeprops=dict(width=0.45, edgecolor="white", linewidth=1.5),
-            startangle=90,
-        )
-        ax_donut.text(0, 0, f"{genome_size / 1e6:.0f} Mb",
-                      ha="center", va="center", fontsize=10, fontweight="bold")
-        ax_donut.legend(
-            wedges,
-            [f"{l}  {v / genome_size * 100:.3f}%" for v, l in zip(vals, lbls)],
-            loc="lower center", bbox_to_anchor=(0.5, -0.18),
-            frameon=False, fontsize=8, ncol=2,
-        )
-    else:
-        ax_donut.text(0.5, 0.5, "No data", ha="center", va="center",
-                      transform=ax_donut.transAxes, color=_C_OTHER)
-    ax_donut.set_title("Genome composition")
-
-    # ── Save ───────────────────────────────────────────────────────────────────
     for fmt in plot_formats:
         out_path = out_base.with_suffix(f".{fmt}")
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -1227,13 +1186,6 @@ _TRNA_LEN_MIN   = 50          # bp
 _TRNA_LEN_MAX   = 150         # bp
 _RRNA_ARRAY_GAP = 50_000      # bp — max gap between consecutive rRNA hits in one array
 _TRNA_ARRAY_GAP = 10_000      # bp — max gap between consecutive tRNA hits in one array
-
-_COMP = str.maketrans("ACGTNacgtn", "TGCANtgcan")
-
-
-def _rev_comp(seq: str) -> str:
-    return seq.translate(_COMP)[::-1]
-
 
 def _parse_gff3_records(gff: Path | None) -> list:
     """Parse a GFF3 into full feature dicts (score, subtype, length …)."""
@@ -1289,7 +1241,7 @@ def _extract_sequences(genome: Path, records: list) -> dict:
         for r in by_seq[name]:
             sub = seq[r["start"] - 1 : r["end"]]
             if r.get("strand") == "-":
-                sub = _rev_comp(sub)
+                sub = _revcomp(sub)
             result[r["feat_id"]] = sub
 
     with open(genome) as fh:
@@ -1385,8 +1337,7 @@ def _ensure_trna_cm(rfam_dir: Path) -> Path:
 
 def _score_trnas_cmsearch(trna_seqs: dict, cm_path: Path,
                            workdir: Path, threads: int, force: bool) -> dict:
-    """Run cmsearch RF00005 against extracted tRNA sequences.
-    Returns {feat_id: best_bit_score}."""
+    """Run cmsearch RF00005 against extracted tRNA sequences; return {feat_id: best_bit_score}."""
     cmsearch  = _require_tool("cmsearch")
     trna_fa   = workdir / "mod06_trna_seqs.fasta"
     tblout    = workdir / "mod06_trna_cmsearch.tblout"
@@ -1571,95 +1522,91 @@ def _plot_evolution(rrna_records: list, trna_classified: list,
     plt.close(fig)
 
 
-# ── Module 6 main ─────────────────────────────────────────────────────────────
+# ── Module 6 sub-step helpers ─────────────────────────────────────────────────
 
-def run_module6_evolution(fasta: Path,
-                          rrna_gff: Path, trna_gff: Path,
-                          rfam_dir: Path, workdir: Path, results: Path,
-                          prefix: str, genome_size: int, threads: int,
-                          plot_formats: list, force: bool) -> None:
-    """Evolutionary analysis: score distributions, pseudogene classification,
-    tandem array detection."""
-
-    # ── 6a: rRNA bit score distribution ───────────────────────────────────────
-    _banner("Module 6a — rRNA Score Distribution")
-    rrna_records = _parse_gff3_records(rrna_gff)
-
-    rrna_score_tsv = results / f"mod06_rrna_scores_{prefix}.tsv"
-    if rrna_records:
-        if force or not rrna_score_tsv.exists():
-            with open(rrna_score_tsv, "w") as fh:
-                fh.write("feature_id\tseqname\tstart\tend\tstrand\t"
-                         "subtype\tlength_bp\tbit_score\tevalue\n")
-                for r in rrna_records:
-                    fh.write(
-                        f"{r['feat_id']}\t{r['seqname']}\t{r['start']}\t"
-                        f"{r['end']}\t{r['strand']}\t{r['subtype']}\t"
-                        f"{r['length']}\t"
-                        f"{'NA' if r['score']  is None else r['score']}\t"
-                        f"{'NA' if r['evalue'] is None else r['evalue']}\n"
-                    )
-        scored = [r for r in rrna_records if r["score"] is not None]
-        _log(f"  {len(scored):,} / {len(rrna_records):,} rRNA copies have bit scores")
-        for sub in _RRNA_ORDER:
-            sub_scores = [r["score"] for r in scored if r["subtype"] == sub]
-            if sub_scores:
-                med = sorted(sub_scores)[len(sub_scores) // 2]
-                _log(f"    {sub:30s}  n={len(sub_scores):6,}  "
-                     f"median score={med:.1f}  "
-                     f"min={min(sub_scores):.1f}  max={max(sub_scores):.1f}")
-    else:
+def _run_rrna_score_analysis(rrna_records: list, results: Path,
+                              prefix: str, force: bool) -> None:
+    """Log rRNA bit score statistics and write score TSV."""
+    if not rrna_records:
         _log("  No rRNA records found — skipping 6a")
+        return
+    rrna_score_tsv = results / f"mod06_rrna_scores_{prefix}.tsv"
+    if force or not rrna_score_tsv.exists():
+        sorted_rrna = sorted(rrna_records,
+                             key=lambda r: (_natural_key(r["seqname"]), r["start"]))
+        with open(rrna_score_tsv, "w") as fh:
+            fh.write("feature_id\tseqname\tstart\tend\tstrand\t"
+                     "subtype\tlength_bp\tbit_score\tevalue\n")
+            for r in sorted_rrna:
+                fh.write(
+                    f"{r['feat_id']}\t{r['seqname']}\t{r['start']}\t"
+                    f"{r['end']}\t{r['strand']}\t{r['subtype']}\t"
+                    f"{r['length']}\t"
+                    f"{'NA' if r['score']  is None else r['score']}\t"
+                    f"{'NA' if r['evalue'] is None else r['evalue']}\n"
+                )
+    scored = [r for r in rrna_records if r["score"] is not None]
+    _log(f"  {len(scored):,} / {len(rrna_records):,} rRNA copies have bit scores")
+    for sub in _RRNA_ORDER:
+        sub_scores = [r["score"] for r in scored if r["subtype"] == sub]
+        if sub_scores:
+            med = sorted(sub_scores)[len(sub_scores) // 2]
+            _log(f"    {sub:30s}  n={len(sub_scores):6,}  "
+                 f"median score={med:.1f}  "
+                 f"min={min(sub_scores):.1f}  max={max(sub_scores):.1f}")
 
-    # ── 6b: tRNA pseudogene classification ────────────────────────────────────
-    _banner("Module 6b — tRNA Pseudogene Classification")
-    trna_records    = _parse_gff3_records(trna_gff)
-    trna_classified = []
 
-    if trna_records:
-        _log(f"  Extracting {len(trna_records):,} tRNA sequences …")
-        trna_seqs = _extract_sequences(fasta, trna_records)
-        _log(f"  Extracted {len(trna_seqs):,} sequences")
-
-        trna_cm   = _ensure_trna_cm(rfam_dir)
-        cm_scores = _score_trnas_cmsearch(trna_seqs, trna_cm, workdir, threads, force)
-        _log(f"  cmsearch scored {len(cm_scores):,} tRNAs")
-
-        trna_classified = _classify_trnas(trna_records, cm_scores)
-        n_pseudo = sum(1 for t in trna_classified if t["category"] == "pseudogene")
-        n_func   = len(trna_classified) - n_pseudo
-        _log(f"  Functional: {n_func:,}   Pseudogene candidates: {n_pseudo:,}")
-
-        # Breakdown of pseudogene reasons
-        from collections import Counter as _Counter
-        reason_counts = _Counter()
-        for t in trna_classified:
-            if t["category"] == "pseudogene":
-                for tok in t["reason"].split(";"):
-                    reason_counts[tok.strip()] += 1
-        for reason, cnt in reason_counts.most_common():
-            _log(f"    {reason}: {cnt:,}")
-
-        trna_class_tsv = results / f"mod06_trna_class_{prefix}.tsv"
-        if force or not trna_class_tsv.exists():
-            with open(trna_class_tsv, "w") as fh:
-                fh.write("feature_id\tseqname\tstart\tend\tstrand\tsubtype\t"
-                         "anticodon\tlength_bp\tcm_score\tcategory\treason\n")
-                for t in trna_classified:
-                    sc = f"{t['cm_score']:.1f}" if t["cm_score"] is not None else "NA"
-                    fh.write(
-                        f"{t['feat_id']}\t{t['seqname']}\t{t['start']}\t"
-                        f"{t['end']}\t{t['strand']}\t{t['subtype']}\t"
-                        f"{t['anticodon']}\t{t['length']}\t"
-                        f"{sc}\t{t['category']}\t{t['reason']}\n"
-                    )
-            _log(f"  Written: {trna_class_tsv.name}")
-    else:
+def _run_trna_classify_analysis(trna_records: list, fasta: Path,
+                                 rfam_dir: Path, workdir: Path, results: Path,
+                                 prefix: str, threads: int, force: bool) -> list:
+    """Score, classify tRNA records; write TSV; return classified list."""
+    if not trna_records:
         _log("  No tRNA records found — skipping 6b")
+        return []
+    _log(f"  Extracting {len(trna_records):,} tRNA sequences …")
+    trna_seqs = _extract_sequences(fasta, trna_records)
+    _log(f"  Extracted {len(trna_seqs):,} sequences")
 
-    # ── 6c: Tandem array detection ────────────────────────────────────────────
-    _banner("Module 6c — Tandem Array Detection")
+    trna_cm   = _ensure_trna_cm(rfam_dir)
+    cm_scores = _score_trnas_cmsearch(trna_seqs, trna_cm, workdir, threads, force)
+    _log(f"  cmsearch scored {len(cm_scores):,} tRNAs")
 
+    trna_classified = _classify_trnas(trna_records, cm_scores)
+    n_pseudo = sum(1 for t in trna_classified if t["category"] == "pseudogene")
+    n_func   = len(trna_classified) - n_pseudo
+    _log(f"  Functional: {n_func:,}   Pseudogene candidates: {n_pseudo:,}")
+
+    reason_counts = Counter()
+    for t in trna_classified:
+        if t["category"] == "pseudogene":
+            for tok in t["reason"].split(";"):
+                reason_counts[tok.strip()] += 1
+    for reason, cnt in reason_counts.most_common():
+        _log(f"    {reason}: {cnt:,}")
+
+    trna_class_tsv = results / f"mod06_trna_class_{prefix}.tsv"
+    if force or not trna_class_tsv.exists():
+        sorted_trna = sorted(trna_classified,
+                             key=lambda t: (_natural_key(t["seqname"]), t["start"]))
+        with open(trna_class_tsv, "w") as fh:
+            fh.write("feature_id\tseqname\tstart\tend\tstrand\tsubtype\t"
+                     "anticodon\tlength_bp\tcm_score\tcategory\treason\n")
+            for t in sorted_trna:
+                sc = f"{t['cm_score']:.1f}" if t["cm_score"] is not None else "NA"
+                fh.write(
+                    f"{t['feat_id']}\t{t['seqname']}\t{t['start']}\t"
+                    f"{t['end']}\t{t['strand']}\t{t['subtype']}\t"
+                    f"{t['anticodon']}\t{t['length']}\t"
+                    f"{sc}\t{t['category']}\t{t['reason']}\n"
+                )
+        _log(f"  Written: {trna_class_tsv.name}")
+    return trna_classified
+
+
+def _run_array_analysis(rrna_records: list, trna_records: list,
+                        results: Path, prefix: str,
+                        force: bool) -> tuple[list, list]:
+    """Detect tandem arrays, log stats, write arrays TSV; return (rrna_arrays, trna_arrays)."""
     rrna_arrays = _detect_arrays(rrna_records, max_gap=_RRNA_ARRAY_GAP) if rrna_records else []
     trna_arrays = _detect_arrays(trna_records, max_gap=_TRNA_ARRAY_GAP) if trna_records else []
 
@@ -1688,6 +1635,7 @@ def run_module6_evolution(fasta: Path,
     arrays_tsv = results / f"mod06_arrays_{prefix}.tsv"
     all_arrays = ([{"feature_class": "rRNA", **a} for a in rrna_arrays] +
                   [{"feature_class": "tRNA", **a} for a in trna_arrays])
+    all_arrays.sort(key=lambda a: (_natural_key(a["seqname"]), a["array_start"]))
     if all_arrays and (force or not arrays_tsv.exists()):
         with open(arrays_tsv, "w") as fh:
             fh.write("feature_class\tarray_id\tseqname\tarray_start\tarray_end\t"
@@ -1704,8 +1652,30 @@ def run_module6_evolution(fasta: Path,
                     f"{a.get('complete_rDNA_units', 0)}\t{sub}\n"
                 )
         _log(f"  Written: {arrays_tsv.name}")
+    return rrna_arrays, trna_arrays
 
-    # ── 6d: Plots ─────────────────────────────────────────────────────────────
+
+# ── Module 6 main ─────────────────────────────────────────────────────────────
+
+def run_module6_evolution(fasta: Path,
+                          rrna_gff: Path, trna_gff: Path,
+                          rfam_dir: Path, workdir: Path, results: Path,
+                          prefix: str, genome_size: int, threads: int,
+                          plot_formats: list, force: bool) -> None:
+    """Run evolutionary analysis: rRNA scores, tRNA pseudogene classification, tandem arrays."""
+    _banner("Module 6a — rRNA Score Distribution")
+    rrna_records = _parse_gff3_records(rrna_gff)
+    _run_rrna_score_analysis(rrna_records, results, prefix, force)
+
+    _banner("Module 6b — tRNA Pseudogene Classification")
+    trna_records    = _parse_gff3_records(trna_gff)
+    trna_classified = _run_trna_classify_analysis(
+        trna_records, fasta, rfam_dir, workdir, results, prefix, threads, force)
+
+    _banner("Module 6c — Tandem Array Detection")
+    rrna_arrays, trna_arrays = _run_array_analysis(
+        rrna_records, trna_records, results, prefix, force)
+
     _banner("Module 6d — Evolution Plots")
     out_base  = results / f"mod06_evolution_{prefix}"
     out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
@@ -1713,6 +1683,77 @@ def run_module6_evolution(fasta: Path,
         _plot_evolution(rrna_records, trna_classified,
                         rrna_arrays, trna_arrays,
                         out_base, plot_formats, prefix)
+
+
+# ── Run log and carbon tracker helpers ───────────────────────────────────────
+
+def _open_run_log(logs_dir: Path) -> Path:
+    """Open the run log, write the header, set _LOG_FH; return log path."""
+    global _LOG_FH
+    log_path = logs_dir / "Run_UbboTELORNA.log"
+    _LOG_FH  = open(log_path, "w")
+    sep = "=" * 62
+    _LOG_FH.write(f"{sep}\n  UbboTELORNA {VERSION}  —  Run Log\n{sep}\n")
+    _LOG_FH.write(f"Date      : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    _LOG_FH.write(f"User      : {getpass.getuser()}\n")
+    _LOG_FH.write(f"Server    : {platform.node()}\n")
+    _LOG_FH.write(f"OS        : {platform.system()} {platform.release()} "
+                  f"({platform.machine()})\n")
+    _LOG_FH.write(f"Directory : {os.getcwd()}\n")
+    _LOG_FH.write(f"Command   : {' '.join(sys.argv)}\n")
+    _LOG_FH.write(f"{sep}\n\n")
+    _LOG_FH.flush()
+    return log_path
+
+
+def _setup_co2_tracker(logs_dir: Path, prefix: str, disable: bool):
+    """Start the codecarbon emissions tracker if available; return tracker or None."""
+    if disable:
+        _log("  Carbon footprint tracking disabled (--disable_co2_tracking)")
+        return None
+    try:
+        # pkg_resources is part of setuptools; in some conda environments
+        # it is not on sys.path even though setuptools is installed.
+        # Inject a minimal shim so codecarbon can import cleanly.
+        try:
+            import pkg_resources  # noqa: F401
+        except ModuleNotFoundError:
+            import types as _t, importlib.metadata as _m, importlib as _il
+            from pathlib import Path as _P
+            _shim = _t.ModuleType("pkg_resources")
+            def _get_dist(name):
+                try:
+                    d = _m.distribution(name)
+                    d.version = d.metadata["Version"]
+                    return d
+                except Exception:
+                    return None
+            def _resource_filename(pkg, resource):
+                try:
+                    mod = _il.import_module(pkg)
+                    return str(_P(mod.__file__).parent / resource)
+                except Exception:
+                    return resource
+            _shim.get_distribution     = _get_dist
+            _shim.resource_filename    = _resource_filename
+            _shim.DistributionNotFound = Exception
+            sys.modules["pkg_resources"] = _shim
+
+        from codecarbon import EmissionsTracker
+        tracker = EmissionsTracker(
+            output_dir=str(logs_dir),
+            output_file=f"{prefix}.emissions.csv",
+            project_name="UbboTELORNA",
+            log_level="warning",
+        )
+        tracker.start()
+        _log("  codecarbon tracker started")
+        return tracker
+    except ImportError as e:
+        _log(f"  codecarbon not installed — carbon tracking skipped ({e})")
+    except Exception as e:
+        _log(f"  codecarbon failed to start — carbon tracking skipped ({e})")
+    return None
 
 
 # ── Argument parser ───────────────────────────────────────────────────────────
@@ -1820,21 +1861,7 @@ def main() -> None:
         d.mkdir(parents=True, exist_ok=True)
     prefix = run_dir.name
 
-    # Open log
-    global _LOG_FH
-    log_path = logs_dir / "Run_UbboTELORNA.log"
-    _LOG_FH  = open(log_path, "w")
-    sep = "=" * 62
-    _LOG_FH.write(f"{sep}\n  UbboTELORNA {VERSION}  —  Run Log\n{sep}\n")
-    _LOG_FH.write(f"Date      : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    _LOG_FH.write(f"User      : {getpass.getuser()}\n")
-    _LOG_FH.write(f"Server    : {platform.node()}\n")
-    _LOG_FH.write(f"OS        : {platform.system()} {platform.release()} "
-                  f"({platform.machine()})\n")
-    _LOG_FH.write(f"Directory : {os.getcwd()}\n")
-    _LOG_FH.write(f"Command   : {' '.join(sys.argv)}\n")
-    _LOG_FH.write(f"{sep}\n\n")
-    _LOG_FH.flush()
+    log_path = _open_run_log(logs_dir)
 
     _banner(f"UbboTELORNA {VERSION}")
     _log(f"  Input FASTA : {args.fasta}")
@@ -1896,51 +1923,7 @@ def main() -> None:
 
     # Carbon tracking
     t_start  = time.monotonic()
-    _tracker = None
-    if args.disable_co2_tracking:
-        _log("  Carbon footprint tracking disabled (--disable_co2_tracking)")
-    else:
-        try:
-            # pkg_resources is part of setuptools; in some conda environments
-            # it is not on sys.path even though setuptools is installed.
-            # Inject a minimal shim so codecarbon can import cleanly.
-            try:
-                import pkg_resources  # noqa: F401
-            except ModuleNotFoundError:
-                import types as _t, importlib.metadata as _m, importlib as _il
-                from pathlib import Path as _P
-                _shim = _t.ModuleType("pkg_resources")
-                def _get_dist(name):
-                    try:
-                        d = _m.distribution(name)
-                        d.version = d.metadata["Version"]
-                        return d
-                    except Exception:
-                        return None
-                def _resource_filename(pkg, resource):
-                    try:
-                        mod = _il.import_module(pkg)
-                        return str(_P(mod.__file__).parent / resource)
-                    except Exception:
-                        return resource
-                _shim.get_distribution    = _get_dist
-                _shim.resource_filename   = _resource_filename
-                _shim.DistributionNotFound = Exception
-                sys.modules["pkg_resources"] = _shim
-
-            from codecarbon import EmissionsTracker
-            _tracker = EmissionsTracker(
-                output_dir=str(logs_dir),
-                output_file=f"{prefix}.emissions.csv",
-                project_name="UbboTELORNA",
-                log_level="warning",
-            )
-            _tracker.start()
-            _log("  codecarbon tracker started")
-        except ImportError as e:
-            _log(f"  codecarbon not installed — carbon tracking skipped ({e})")
-        except Exception as e:
-            _log(f"  codecarbon failed to start — carbon tracking skipped ({e})")
+    _tracker = _setup_co2_tracker(logs_dir, prefix, args.disable_co2_tracking)
 
     def _skip(n: int, label: str, path: Path | None = None) -> bool:
         if n in skip_modules:
