@@ -12,8 +12,8 @@ authors:
     given-names: Aureliano
     email: aubombarely@gmail.com
     orcid: "https://orcid.org/0000-0001-6257-8914"
-version: "v0.1.0"
-date-released: "2026-06-27"
+version: "v0.2.0"
+date-released: "2026-07-04"
 license: MIT
 repository-code: "https://github.com/aubombarely/UbboTELORNA"
 keywords:
