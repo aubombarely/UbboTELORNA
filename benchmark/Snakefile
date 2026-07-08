@@ -683,6 +683,7 @@ rule perf_trnascan_sweep:
     conda:
         "envs/benchmark.yaml"
     shell:
+        "rm -f {params.gff3} && "
         "tRNAscan-SE {params.mode} --thread {threads} "
         "  --gff {params.gff3} {input.fasta} > {log} 2>&1"
 
