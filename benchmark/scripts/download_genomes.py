@@ -21,8 +21,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
+
+_MAX_ATTEMPTS = 3
+_RETRY_DELAY  = 60  # seconds between retries
 
 
 def _find_single(directory: Path, pattern: str) -> Path | None:
@@ -66,11 +70,23 @@ def download(accession: str, outdir: Path, genome: str) -> None:
             "--filename", str(zip_path),
             "--no-progressbar",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
+        last_err = ""
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                break
+            last_err = result.stderr[-3000:]
+            if attempt < _MAX_ATTEMPTS:
+                print(
+                    f"[download] {genome}: attempt {attempt}/{_MAX_ATTEMPTS} failed; "
+                    f"retrying in {_RETRY_DELAY}s …",
+                    file=sys.stderr,
+                )
+                time.sleep(_RETRY_DELAY)
+        else:
             print(
-                f"ERROR: datasets download failed for {accession}:\n"
-                f"{result.stderr[-3000:]}",
+                f"ERROR: datasets download failed for {accession} "
+                f"after {_MAX_ATTEMPTS} attempts:\n{last_err}",
                 file=sys.stderr,
             )
             sys.exit(1)
