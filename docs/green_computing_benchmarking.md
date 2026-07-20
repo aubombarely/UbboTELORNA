@@ -113,3 +113,43 @@ absolute compute cost of all four tools starts to converge. Worth
 re-testing on a larger genome set (or the full 40) before treating the
 ~2-5x range as a general claim rather than a result specific to these five
 genomes.
+
+## Extrapolation to production scale (1000 genomes @ ~1 Gb)
+
+**This section projects beyond what was actually measured** — the largest
+genome tested above is 375 Mb, and a 1 Gb genome is ~2.7x further out than
+that. The rate below is fit from the two largest measured genomes
+(*A. thaliana* 135 Mb, *O. sativa* 375 Mb, the closest match to a 1 Gb
+target) rather than all five, since the tiny bacterial genomes pull the
+fit in a direction less relevant at this scale. Treat it as a reasoned
+estimate, not a measured fact: the correctness benchmark already found
+*non-linear* memory scaling at very large genome sizes (maize: ~1.2 GB RAM
+vs. ~0.3 GB for barrnap) — if that non-linearity also applies to time/
+energy at real 1 Gb+ plant genome scale, this extrapolation could
+understate the true difference. A real run on one or two ~1 Gb genomes
+would firm this up before citing it as a hard number.
+
+| | Per 1 Gb genome | Across 1000 genomes |
+|---|---|---|
+| **UbboTELORNA** | 7.4 g CO2eq (~7.5 min) | **7.4 kg CO2eq** (~124 CPU-hours) |
+| **barrnap + tRNAscan-SE + tidk** | 14.5 g CO2eq (~13.5 min) | **14.5 kg CO2eq** (~226 CPU-hours) |
+| **Savings from using UbboTELORNA** | — | **7.2 kg CO2eq, ~102 CPU-hours** |
+
+The ~2x advantage holds at this scale — it isn't a small-genome artifact
+that evaporates as genomes get larger.
+
+**Context for the 7.2 kg CO2eq saved** (regular car, ~130 g CO2/km):
+- ≈ 55 km of driving avoided
+- ≈ 0.36% of one car's average annual emissions (~2,000 kg/year)
+
+**Honest bottom line:** at 1000-genome scale, the absolute CO2 savings are
+still modest in everyday terms — less than one car's daily commute, not a
+standalone "green computing" headline. The stronger, more defensible claim
+is the *relative* one: consistently ~2x less compute and emissions than
+the standard tool combination, which scales proportionally with however
+many genomes are actually processed. At 10,000 genomes (a realistic scale
+for a large annotation initiative), that becomes ~72 kg CO2eq and ~1,020
+CPU-hours saved — roughly one car's monthly emissions and over a
+person-month of compute time, which starts to be a genuinely meaningful
+operational efficiency gain even though the environmental framing alone
+stays modest at any single-project scale for this specific task.
