@@ -153,12 +153,20 @@ def run_barrnap(config: dict, genome: str, fasta: Path, threads: int,
 
 def run_trnascan(config: dict, genome: str, fasta: Path, threads: int,
                  outdir: Path) -> dict:
+    """tRNAscan-SE prompts interactively to overwrite --gff/-m if they
+    already exist and hangs forever waiting for stdin that never comes on
+    a reruns -- same issue already fixed for the perf sweep in the main
+    Snakefile (see git history). Delete stale outputs first so a rerun of
+    this script is always safe."""
     mode = config["genomes"][genome]["trnascan_mode"]
     run_dir = outdir / "runs" / f"trnascan_{genome}"
     run_dir.mkdir(parents=True, exist_ok=True)
+    gff3_out = run_dir / f"{genome}.gff3"
+    stats_out = run_dir / f"{genome}_stats.txt"
+    gff3_out.unlink(missing_ok=True)
+    stats_out.unlink(missing_ok=True)
     cmd = ["tRNAscan-SE", mode, "--thread", str(threads),
-          "--gff", str(run_dir / f"{genome}.gff3"),
-          "-m", str(run_dir / f"{genome}_stats.txt"), str(fasta)]
+          "--gff", str(gff3_out), "-m", str(stats_out), str(fasta)]
     return run_tracked(cmd, "trnascan", genome, outdir / "emissions")
 
 
@@ -170,6 +178,9 @@ def run_tidk(config: dict, genome: str, fasta: Path, outdir: Path) -> dict:
     repeat = config["genomes"][genome]["telomere_repeat"]
     run_dir = outdir / "runs" / f"tidk_{genome}"
     run_dir.mkdir(parents=True, exist_ok=True)
+    # Precautionary: same reruns-hang risk as tRNAscan-SE if tidk also
+    # prompts on an existing output (unconfirmed, but cheap to guard against).
+    (run_dir / f"{genome}_telomeric_repeat_windows.tsv").unlink(missing_ok=True)
 
     def _run():
         rep = repeat
