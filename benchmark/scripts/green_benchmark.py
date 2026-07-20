@@ -99,9 +99,13 @@ def run_tracked(cmd: list, label: str, genome: str, outdir: Path,
     elapsed_s = time.monotonic() - t0
     emissions_kg = tracker.stop()
 
+    # Flatten embedded newlines/tabs in captured stderr so every row stays
+    # on exactly one line -- otherwise plain-text tools (cut/awk/grep)
+    # can't parse the file even when the delimiter itself is correct.
+    err_flat = err.replace("\n", " | ").replace("\t", " ") if err else err
     row = {"genome": genome, "tool": label, "ok": ok,
           "elapsed_s": round(elapsed_s, 2),
-          "emissions_kg_co2eq": emissions_kg, "error": err}
+          "emissions_kg_co2eq": emissions_kg, "error": err_flat}
     status = "OK" if ok else "FAILED"
     print(f"[{status}] {label:12s} {genome:14s} "
           f"{elapsed_s:7.1f}s  {emissions_kg or 0:.6f} kg CO2eq")
@@ -110,8 +114,16 @@ def run_tracked(cmd: list, label: str, genome: str, outdir: Path,
 
 def run_ubbotelorna(config: dict, genome: str, fasta: Path, threads: int,
                     outdir: Path) -> dict:
+    """UbboTELORNA's own dependencies (tantan, infernal/cmsearch, aragorn,
+    nhmmer) live in its own conda env (`ubbotelorna`), separate from this
+    benchmark's `ubbotelorna_bench` env -- mirrors the main Snakefile's
+    `conda: "../envs/UbboTELORNA.yaml"` directive on its UbboTELORNA rules.
+    Running it with whatever env happens to be active otherwise fails
+    partway through (Module 1 onward) with no dependency it needs."""
     run_dir = outdir / "runs" / f"ubbotelorna_{genome}"
+    env_name = config.get("ubbotelorna_conda_env", "ubbotelorna")
     cmd = [
+        "conda", "run", "-n", env_name, "--no-capture-output",
         "python3", str((_basedir / config["ubbotelorna_script"]).resolve()),
         "--fasta", str(fasta), "--output", str(run_dir),
         "--kingdom", config["genomes"][genome]["kingdom"],
@@ -216,13 +228,33 @@ def main(argv=None):
         rows.append(run_ubbotelorna(config, genome, fasta, args.threads, args.outdir))
         rows.append(run_barrnap(config, genome, fasta, args.threads, args.outdir))
         rows.append(run_trnascan(config, genome, fasta, args.threads, args.outdir))
-        rows.append(run_tidk(config, genome, fasta, args.outdir))
+
+        # Genomes with telomere_repeat: null (e.g. circular bacterial
+        # chromosomes like ecoli_k12) have no linear telomere to search for
+        # at all -- mirrors the main Snakefile's own exclusion
+        # (`if config["genomes"][g].get("telomere_repeat")`), which this
+        # script missed on first pass and crashed on (tidk given a literal
+        # None as --string).
+        if config["genomes"][genome].get("telomere_repeat"):
+            rows.append(run_tidk(config, genome, fasta, args.outdir))
+        else:
+            print(f"[SKIP]   tidk         {genome:14s} "
+                  f"no telomere_repeat configured (circular genome)")
+            rows.append({"genome": genome, "tool": "tidk", "ok": None,
+                        "elapsed_s": None, "emissions_kg_co2eq": None,
+                        "error": "skipped: telomere_repeat is null in config.yaml"})
 
     summary_path = args.outdir / "green_benchmark_summary.tsv"
     with open(summary_path, "w", newline="") as fh:
+        # Actually tab-delimited (previously defaulted to comma despite the
+        # .tsv name), and the "error" field is already newline-flattened in
+        # run_tracked() -- both needed for cut/awk/grep to work on this file,
+        # since the error column can otherwise contain embedded newlines
+        # and commas that break naive line-based parsing regardless of
+        # delimiter.
         writer = csv.DictWriter(fh, fieldnames=["genome", "tool", "ok",
                                                "elapsed_s", "emissions_kg_co2eq",
-                                               "error"])
+                                               "error"], delimiter="\t")
         writer.writeheader()
         writer.writerows(rows)
     print(f"\nWritten: {summary_path}")

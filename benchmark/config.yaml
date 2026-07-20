@@ -9,6 +9,11 @@ results_dir: "results"
 # ── UbboTELORNA script (relative to benchmark/) ────────────────────────────
 ubbotelorna_script: "../scripts/UbboTELORNA.py"
 
+# Conda env UbboTELORNA's own dependencies (tantan, infernal/cmsearch,
+# aragorn, nhmmer) are installed in -- separate from ubbotelorna_bench.
+# Used by scripts/green_benchmark.py, invoked via `conda run -n {this}`.
+ubbotelorna_conda_env: "ubbotelorna"
+
 # ── thread counts ───────────────────────────────────────────────────────────
 # Default thread count used for the correctness and robustness benchmarks.
 default_threads: 8
