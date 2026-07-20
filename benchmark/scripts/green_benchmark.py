@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""Fast (5-genome) codecarbon benchmark: UbboTELORNA vs. barrnap +
+tRNAscan-SE + tidk, measuring real emissions per tool rather than just
+wall-clock time.
+
+Every tool invocation is wrapped in its own fresh codecarbon
+EmissionsTracker, so all four tools are measured with the same
+methodology (UbboTELORNA's own built-in tracker is disabled here via
+--disable_co2_tracking, to avoid mixing self-reported and externally
+observed numbers).
+
+UbboTELORNA is run once per genome as the full pipeline (Modules 0-4:
+telomere + rRNA + tRNA + integration), which is compared against the SUM
+of barrnap + tRNAscan-SE + tidk run separately — the same "full pipeline"
+framing already used in the main benchmark's README ("Full pipeline |
+UbboTELORNA (Modules 0-4) | barrnap + tRNAscan-SE"), extended to include
+tidk for telomeres.
+
+Assumes the 5 genomes below are already downloaded (see `download_all` in
+the main Snakefile, or run `download_genomes.py` directly for just these).
+
+Usage:
+    conda activate ubbotelorna_bench   # barrnap, tRNAscan-SE, tidk, snakemake, ...
+    python3 green_benchmark.py --outdir results/green/ --threads 8
+
+    # UbboTELORNA itself runs in its own env, activated automatically
+    # if `ubbotelorna_env` in config.yaml names a conda env with `conda run`;
+    # otherwise it must be importable/runnable from the current env too.
+"""
+
+import argparse
+import csv
+import shutil
+import subprocess
+import sys
+import time
+import yaml
+from pathlib import Path
+
+_basedir = Path(__file__).resolve().parent.parent  # benchmark/
+
+# Five genomes spanning ~3 orders of magnitude in size, all already defined
+# in config.yaml (subset of performance_genomes) so results are directly
+# comparable to the existing 40-genome correctness benchmark.
+GENOMES = ["ecoli_k12", "scerevisiae", "athaliana", "celegans", "osativa"]
+
+
+def _require_tool(name: str) -> str:
+    tool = shutil.which(name)
+    if tool is None:
+        print(f"ERROR: '{name}' not found in PATH. Activate the benchmark "
+              f"environment first: conda activate ubbotelorna_bench",
+              file=sys.stderr)
+        sys.exit(1)
+    return tool
+
+
+def _load_config() -> dict:
+    with open(_basedir / "config.yaml") as fh:
+        return yaml.safe_load(fh)
+
+
+def _genome_fasta(config: dict, genome: str) -> Path:
+    fasta = Path(config["results_dir"]) / "genomes" / genome / f"{genome}.fasta"
+    if not fasta.exists():
+        print(f"ERROR: {fasta} not found. Download it first, e.g.:\n"
+              f"  python3 scripts/download_genomes.py --accession "
+              f"{config['genomes'][genome]['accession']} --outdir "
+              f"{fasta.parent} --genome {genome}", file=sys.stderr)
+        sys.exit(1)
+    return fasta
+
+
+def run_tracked(cmd: list, label: str, genome: str, outdir: Path,
+                run_fn=subprocess.run) -> dict:
+    """Run `cmd` (or call `run_fn` with no args, for multi-step tools like
+    tidk) inside a fresh codecarbon EmissionsTracker. Returns a result dict;
+    never raises on tool failure — failures are recorded, not fatal, so one
+    bad genome/tool doesn't abort the whole (fast, small) benchmark."""
+    from codecarbon import EmissionsTracker
+
+    tracker = EmissionsTracker(
+        project_name=f"{label}_{genome}",
+        output_dir=str(outdir), output_file="emissions.csv",
+        log_level="warning", save_to_file=True,
+    )
+    tracker.start()
+    t0 = time.monotonic()
+    ok, err = True, ""
+    try:
+        if cmd is not None:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            ok = result.returncode == 0
+            err = result.stderr[-2000:] if not ok else ""
+        else:
+            run_fn()
+    except Exception as e:
+        ok, err = False, str(e)
+    elapsed_s = time.monotonic() - t0
+    emissions_kg = tracker.stop()
+
+    row = {"genome": genome, "tool": label, "ok": ok,
+          "elapsed_s": round(elapsed_s, 2),
+          "emissions_kg_co2eq": emissions_kg, "error": err}
+    status = "OK" if ok else "FAILED"
+    print(f"[{status}] {label:12s} {genome:14s} "
+          f"{elapsed_s:7.1f}s  {emissions_kg or 0:.6f} kg CO2eq")
+    return row
+
+
+def run_ubbotelorna(config: dict, genome: str, fasta: Path, threads: int,
+                    outdir: Path) -> dict:
+    run_dir = outdir / "runs" / f"ubbotelorna_{genome}"
+    cmd = [
+        "python3", str((_basedir / config["ubbotelorna_script"]).resolve()),
+        "--fasta", str(fasta), "--output", str(run_dir),
+        "--kingdom", config["genomes"][genome]["kingdom"],
+        "--threads", str(threads),
+        "--disable_co2_tracking",   # avoid double-tracking; see module docstring
+        "--skip_module", "5,6",     # evolutionary-analysis modules, not part
+                                     # of the core annotation task being compared
+        "--force",
+    ]
+    return run_tracked(cmd, "ubbotelorna", genome, outdir / "emissions")
+
+
+def run_barrnap(config: dict, genome: str, fasta: Path, threads: int,
+                outdir: Path) -> dict:
+    kingdom = config["genomes"][genome]["barrnap_kingdom"]
+    gff3_out = outdir / "runs" / f"barrnap_{genome}.gff3"
+    gff3_out.parent.mkdir(parents=True, exist_ok=True)
+
+    def _run():
+        with open(gff3_out, "w") as fh:
+            subprocess.run(["barrnap", "--kingdom", kingdom, "--threads",
+                           str(threads), str(fasta)], stdout=fh,
+                          stderr=subprocess.PIPE)
+
+    return run_tracked(None, "barrnap", genome, outdir / "emissions", run_fn=_run)
+
+
+def run_trnascan(config: dict, genome: str, fasta: Path, threads: int,
+                 outdir: Path) -> dict:
+    mode = config["genomes"][genome]["trnascan_mode"]
+    run_dir = outdir / "runs" / f"trnascan_{genome}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    cmd = ["tRNAscan-SE", mode, "--thread", str(threads),
+          "--gff", str(run_dir / f"{genome}.gff3"),
+          "-m", str(run_dir / f"{genome}_stats.txt"), str(fasta)]
+    return run_tracked(cmd, "trnascan", genome, outdir / "emissions")
+
+
+def run_tidk(config: dict, genome: str, fasta: Path, outdir: Path) -> dict:
+    """Mirrors the main Snakefile's run_tidk logic exactly (explore-then-
+    search when the repeat unit isn't already known), wrapped as one
+    tracked unit since that's the equivalent single task UbboTELORNA's
+    Module 0 performs internally in one step."""
+    repeat = config["genomes"][genome]["telomere_repeat"]
+    run_dir = outdir / "runs" / f"tidk_{genome}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    def _run():
+        rep = repeat
+        if rep == "auto":
+            r = subprocess.run(["tidk", "explore", "--minimum", "5",
+                               "--maximum", "12", str(fasta)],
+                              capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError(f"tidk explore failed:\n{r.stderr}")
+            rep = None
+            for line in r.stdout.splitlines():
+                cols = line.strip().split("\t")
+                if cols and cols[0] and all(c in "ACGTacgt" for c in cols[0]):
+                    rep = cols[0].upper()
+                    break
+            if rep is None:
+                raise RuntimeError(f"tidk explore found no telomeric repeat "
+                                  f"in {fasta}")
+        r2 = subprocess.run(["tidk", "search", "--string", rep,
+                            "--output", genome, "--dir", str(run_dir),
+                            str(fasta)], capture_output=True, text=True)
+        if r2.returncode != 0:
+            raise RuntimeError(f"tidk search failed:\n{r2.stderr}")
+
+    return run_tracked(None, "tidk", genome, outdir / "emissions", run_fn=_run)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--outdir", type=Path, default=Path("results/green"),
+                    help="Output directory (default: results/green)")
+    ap.add_argument("--threads", type=int, default=8)
+    ap.add_argument("--genomes", nargs="+", default=GENOMES,
+                    help=f"Genome keys to benchmark (default: {' '.join(GENOMES)})")
+    args = ap.parse_args(argv)
+
+    for tool in ("barrnap", "tRNAscan-SE", "tidk"):
+        _require_tool(tool)
+    try:
+        import codecarbon  # noqa: F401
+    except ImportError:
+        print("ERROR: codecarbon not installed. "
+              "conda install -c conda-forge codecarbon", file=sys.stderr)
+        sys.exit(1)
+
+    config = _load_config()
+    args.outdir.mkdir(parents=True, exist_ok=True)
+    (args.outdir / "emissions").mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    for genome in args.genomes:
+        fasta = _genome_fasta(config, genome)
+        print(f"\n=== {genome} ({config['genomes'][genome]['organism']}, "
+              f"{config['genomes'][genome]['size_mb']} Mb) ===")
+        rows.append(run_ubbotelorna(config, genome, fasta, args.threads, args.outdir))
+        rows.append(run_barrnap(config, genome, fasta, args.threads, args.outdir))
+        rows.append(run_trnascan(config, genome, fasta, args.threads, args.outdir))
+        rows.append(run_tidk(config, genome, fasta, args.outdir))
+
+    summary_path = args.outdir / "green_benchmark_summary.tsv"
+    with open(summary_path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["genome", "tool", "ok",
+                                               "elapsed_s", "emissions_kg_co2eq",
+                                               "error"])
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"\nWritten: {summary_path}")
+
+    # Quick "full pipeline" comparison: UbboTELORNA vs. barrnap+trnascan+tidk summed
+    print("\n=== Full-pipeline comparison (per genome) ===")
+    print(f"{'Genome':14s} {'UbboTELORNA':>14s} {'barrnap+tRNAscan+tidk':>24s} {'Delta':>10s}")
+    for genome in args.genomes:
+        g_rows = [r for r in rows if r["genome"] == genome and r["ok"]]
+        ubbo = sum(r["emissions_kg_co2eq"] or 0 for r in g_rows if r["tool"] == "ubbotelorna")
+        others = sum(r["emissions_kg_co2eq"] or 0 for r in g_rows if r["tool"] != "ubbotelorna")
+        delta = ubbo - others
+        print(f"{genome:14s} {ubbo:14.6f} {others:24.6f} {delta:+10.6f}")
+
+
+if __name__ == "__main__":
+    main()

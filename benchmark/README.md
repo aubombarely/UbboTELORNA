@@ -132,6 +132,39 @@ snakemake --cores 32 --use-conda \
 | `scripts/create_adversarial.py` | Create telomere-prefix and fragmented assemblies |
 | `scripts/compare_annotations.py` | Compute TP/FP/FN, sensitivity, precision, F1 |
 | `scripts/benchmark_report.py` | Generate multi-panel PDF/PNG report |
+| `scripts/green_benchmark.py` | Fast 5-genome codecarbon benchmark (real kg CO2eq per tool, not just wall-clock) — see below |
+
+### Green computing benchmark (`green_benchmark.py`)
+
+A smaller, faster companion benchmark focused on real measured emissions
+rather than wall-clock/memory alone. Wraps each tool invocation (UbboTELORNA
+full-pipeline, barrnap, tRNAscan-SE, tidk) in its own `codecarbon`
+`EmissionsTracker`, so every tool is measured with the same methodology.
+Runs on 5 genomes already used in the main benchmark
+(`ecoli_k12`, `scerevisiae`, `athaliana`, `celegans`, `osativa` — spanning
+~4.6 Mb to ~375 Mb) rather than the full 40, to keep it quick to rerun.
+
+```bash
+conda activate ubbotelorna_bench
+python3 scripts/download_genomes.py --accession GCF_000005845.2 --outdir results/genomes/ecoli_k12 --genome ecoli_k12
+# ... (repeat for scerevisiae, athaliana, celegans, osativa, or use the
+# main Snakefile's `download_all` target and let it fetch everything)
+
+python3 scripts/green_benchmark.py --outdir results/green/ --threads 8
+```
+
+Output: `results/green/green_benchmark_summary.tsv` (one row per
+genome × tool: wall-clock seconds, kg CO2eq, success/failure) plus the raw
+`codecarbon` CSVs under `results/green/emissions/`. The script also prints
+a per-genome "full pipeline" comparison (UbboTELORNA vs. the sum of
+barrnap + tRNAscan-SE + tidk) directly to stdout.
+
+**Not yet run** — written and smoke-tested for correct argument handling
+and graceful failure when tools are missing, but the actual benchmark
+requires `barrnap`/`tRNAscan-SE`/`tidk`/`codecarbon`, none of which are
+available in the environment it was developed in. Needs a real run on a
+machine with the `ubbotelorna_bench` environment before the numbers can be
+cited anywhere.
 
 ---
 

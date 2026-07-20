@@ -42,6 +42,10 @@ See [docs/benchmarking.md](docs/benchmarking.md) for the full benchmark plan:
 tools compared, genome set (13 genomes across prokaryotes, fungi, invertebrates,
 plants, and vertebrates), metrics, and robustness tests.
 
+See [docs/green_computing_benchmarking.md](docs/green_computing_benchmarking.md)
+for a focused, fast (5-genome) companion benchmark measuring real energy/CO2eq
+emissions via `codecarbon`, not just wall-clock time.
+
 ---
 
 ## Overview
