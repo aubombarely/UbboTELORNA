@@ -79,26 +79,37 @@ Full script: [`benchmark/scripts/green_benchmark.py`](../benchmark/scripts/green
 
 ## Results
 
-*Not yet run.* The script has been written and smoke-tested (argument
-handling, help text, graceful failure when tools are missing), but a real
-run requires `barrnap`/`tRNAscan-SE`/`tidk`/`codecarbon`, which weren't
-available in the environment it was developed in. Needs to run on a
-machine with the `ubbotelorna_bench` environment (e.g. Salvia) before any
-numbers can be reported here.
+Run 2026-07-20 on Salvia (`ubbotelorna_bench` env, Python 3.14, 8 threads).
+`codecarbon` fell back to CPU constant-power mode on this hardware (no
+RAPL/NVML available), so absolute kg CO2eq values are TDP-based estimates
+rather than direct hardware energy measurements — the *relative* comparison
+between tools, measured identically for all of them, is the reliable part
+of this result, not the absolute numbers in isolation.
 
-<!--
-Once run, replace this section with the actual results, e.g.:
+| Genome | UbboTELORNA (s / kg CO2eq) | barrnap+tRNAscan-SE+tidk (s / kg CO2eq) | Speedup | Emissions reduction |
+|---|---|---|---|---|
+| ecoli_k12 (4.6 Mb) | 9.88 / 0.000180 | 23.44 / 0.000428 | 2.37x | 2.38x |
+| scerevisiae (12 Mb) | 15.98 / 0.000285 | 79.81 / 0.001436 | 4.99x | 5.04x |
+| athaliana (135 Mb) | 60.04 / 0.001278 | 182.60 / 0.003330 | 3.04x | 2.61x |
+| celegans (100 Mb) | 51.70 / 0.000929 | 195.00 / 0.003539 | 3.77x | 3.81x |
+| osativa (375 Mb) | 167.49 / 0.002967 | 357.43 / 0.006438 | 2.13x | 2.17x |
+| **Total (all 5)** | **305.09 / 0.005639** | **838.28 / 0.015170** | **2.75x** | **2.69x** |
 
-| Genome | UbboTELORNA (kg CO2eq) | barrnap + tRNAscan-SE + tidk (kg CO2eq) | Delta |
-|---|---|---|---|
-| ecoli_k12 | | | |
-| scerevisiae | | | |
-| celegans | | | |
-| athaliana | | | |
-| osativa | | | |
+(`ecoli_k12`'s tidk step is excluded — circular chromosome, no
+`telomere_repeat` configured, correctly skipped rather than run.)
 
-plus a short interpretation paragraph (does the wall-clock speed
-advantage shown in the main benchmark translate into a real emissions
-advantage? does it hold across the whole size range, or only for small/
-large genomes?).
--->
+**Interpretation:** the wall-clock speed advantage already shown in the
+main benchmark (Section 6, [summary](../benchmark/results/UbboTELORNA_benchmark_summary.md))
+translates directly into a real emissions advantage of comparable
+magnitude — UbboTELORNA is never slower or higher-emitting than the
+combined barrnap+tRNAscan-SE+tidk pipeline for any genome tested, and the
+advantage holds across the full size range (4.6 Mb to 375 Mb), not just at
+one end. The largest advantage (~5x) is on the smallest eukaryotic genome
+tested (*S. cerevisiae*); the smallest advantage (~2.1-2.4x) is at both
+size extremes (*E. coli* and *O. sativa*) — plausibly because per-process
+overhead (three separate tool startups vs. one combined pipeline) matters
+proportionally more on very small genomes, while on the largest genome the
+absolute compute cost of all four tools starts to converge. Worth
+re-testing on a larger genome set (or the full 40) before treating the
+~2-5x range as a general claim rather than a result specific to these five
+genomes.
