@@ -15,7 +15,7 @@ dependencies:
   - scipy                  # for statistical tests in benchmark_report.py
   - seaborn                # heatmap styling
   - codecarbon             # green_benchmark.py — per-tool emissions tracking
-  - setuptools             # codecarbon imports pkg_resources (from setuptools)
-                            # internally; not bundled by default on newer
-                            # Python/conda, causing a ModuleNotFoundError at
-                            # `import codecarbon` time otherwise
+  - setuptools<82          # codecarbon imports pkg_resources (from setuptools)
+                            # internally; setuptools 82.0.0 (2026-02-08) removed
+                            # pkg_resources entirely, breaking `import codecarbon`
+                            # with ModuleNotFoundError -- must stay below 82
