@@ -636,6 +636,7 @@ rule perf_ubbotelorna_sweep:
         "../envs/UbboTELORNA.yaml"
     shell:
         """
+        rm -rf {params.outdir}
         python3 {params.script} \
             --fasta {input.fasta} \
             --output {params.outdir} \
@@ -643,6 +644,7 @@ rule perf_ubbotelorna_sweep:
             --threads {threads} \
             --disable_co2_tracking \
             --skip_module 5,6 \
+            --force \
             > {log} 2>&1
         """
 
