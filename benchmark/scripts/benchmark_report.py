@@ -96,42 +96,44 @@ def _load_performance(perf_dir: Path) -> list:
     return rows
 
 
-# ── Panel A: F1 dot plot ──────────────────────────────────────────────────────
+# ── Panel A: F1 connected scatter plot ─────────────────────────────────────────
 
 def _f1_dotplot(ax, metrics: dict, feature: str, title: str) -> None:
     tools   = ["ubbotelorna_nhmmer", "ubbotelorna_cmsearch", "barrnap"] \
               if feature == "rRNA" else ["ubbotelorna_nhmmer", "trnascan"]
+    primary = tools[0]
+
+    values = {}
+    for (genome, tool), subtypes in metrics.items():
+        if tool in tools and "ALL" in subtypes:
+            values[(genome, tool)] = subtypes["ALL"]["F1"]
+
     genomes = sorted({g for g, _ in metrics})
-    x       = np.arange(len(genomes))
-    n_tools = len(tools)
-    width   = 0.6 / max(n_tools - 1, 1)
 
-    values = {tool: [np.nan] * len(genomes) for tool in tools}
-    for j, genome in enumerate(genomes):
-        for tool in tools:
-            key = (genome, tool)
-            if key in metrics and "ALL" in metrics[key]:
-                values[tool][j] = metrics[key]["ALL"]["F1"]
+    # order genomes by the primary tool's F1 (descending) so each tool's line
+    # reads as a trend rather than a jagged alphabetical zig-zag
+    def _sort_key(g):
+        if (g, primary) in values:
+            return -values[(g, primary)]
+        col = [values[(g, t)] for t in tools if (g, t) in values]
+        return -(sum(col) / len(col)) if col else 0.0
 
-    # thin connector per genome, spanning its min-to-max F1 across tools
-    for j in range(len(genomes)):
-        col = [values[tool][j] for tool in tools if not np.isnan(values[tool][j])]
-        if len(col) >= 2:
-            ax.vlines(x[j], min(col), max(col), color=_C_GREY, alpha=0.35,
-                      linewidth=1, zorder=1)
+    genomes = sorted(genomes, key=_sort_key)
+    x = np.arange(len(genomes))
 
-    for i, tool in enumerate(tools):
-        offset = (i - (n_tools - 1) / 2) * width
-        ax.scatter(x + offset, values[tool], color=_TOOL_COLOURS.get(tool, _C_GREY),
-                   label=_TOOL_LABELS.get(tool, tool).replace("\n", " "),
-                   s=26, zorder=3, edgecolor="white", linewidth=0.5)
+    for tool in tools:
+        y = [values.get((g, tool), np.nan) for g in genomes]
+        ax.plot(x, y, marker="o", markersize=4.5, linewidth=1.2, alpha=0.85,
+                color=_TOOL_COLOURS.get(tool, _C_GREY),
+                label=_TOOL_LABELS.get(tool, tool).replace("\n", " "),
+                markeredgecolor="white", markeredgewidth=0.4, zorder=3)
 
     ax.set_xticks(x)
     ax.set_xticklabels(genomes, rotation=40, ha="right", fontsize=9)
     ax.set_ylim(-0.05, 1.05)
     ax.set_ylabel("F1 score")
     ax.grid(axis="y", alpha=0.25, zorder=0)
-    ax.legend(fontsize=8, loc="lower left", ncol=n_tools, framealpha=0.9)
+    ax.legend(fontsize=8, loc="lower left", ncol=len(tools), framealpha=0.9)
     ax.set_title(title)
 
 
