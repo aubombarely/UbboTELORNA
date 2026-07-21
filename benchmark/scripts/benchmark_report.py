@@ -96,37 +96,43 @@ def _load_performance(perf_dir: Path) -> list:
     return rows
 
 
-# ── Panel A: F1 heatmap ───────────────────────────────────────────────────────
+# ── Panel A: F1 dot plot ──────────────────────────────────────────────────────
 
-def _f1_heatmap(ax, metrics: dict, feature: str, title: str) -> None:
+def _f1_dotplot(ax, metrics: dict, feature: str, title: str) -> None:
     tools   = ["ubbotelorna_nhmmer", "ubbotelorna_cmsearch", "barrnap"] \
               if feature == "rRNA" else ["ubbotelorna_nhmmer", "trnascan"]
     genomes = sorted({g for g, _ in metrics})
+    x       = np.arange(len(genomes))
+    n_tools = len(tools)
+    width   = 0.6 / max(n_tools - 1, 1)
 
-    matrix = np.full((len(tools), len(genomes)), np.nan)
+    values = {tool: [np.nan] * len(genomes) for tool in tools}
     for j, genome in enumerate(genomes):
-        for i, tool in enumerate(tools):
+        for tool in tools:
             key = (genome, tool)
             if key in metrics and "ALL" in metrics[key]:
-                matrix[i, j] = metrics[key]["ALL"]["F1"]
+                values[tool][j] = metrics[key]["ALL"]["F1"]
 
-    im = ax.imshow(matrix, aspect="auto", cmap="Blues", vmin=0, vmax=1)
+    # thin connector per genome, spanning its min-to-max F1 across tools
+    for j in range(len(genomes)):
+        col = [values[tool][j] for tool in tools if not np.isnan(values[tool][j])]
+        if len(col) >= 2:
+            ax.vlines(x[j], min(col), max(col), color=_C_GREY, alpha=0.35,
+                      linewidth=1, zorder=1)
 
-    ax.set_xticks(range(len(genomes)))
+    for i, tool in enumerate(tools):
+        offset = (i - (n_tools - 1) / 2) * width
+        ax.scatter(x + offset, values[tool], color=_TOOL_COLOURS.get(tool, _C_GREY),
+                   label=_TOOL_LABELS.get(tool, tool).replace("\n", " "),
+                   s=26, zorder=3, edgecolor="white", linewidth=0.5)
+
+    ax.set_xticks(x)
     ax.set_xticklabels(genomes, rotation=40, ha="right", fontsize=9)
-    ax.set_yticks(range(len(tools)))
-    ax.set_yticklabels([_TOOL_LABELS.get(t, t) for t in tools], fontsize=9)
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_ylabel("F1 score")
+    ax.grid(axis="y", alpha=0.25, zorder=0)
+    ax.legend(fontsize=8, loc="lower left", ncol=n_tools, framealpha=0.9)
     ax.set_title(title)
-
-    # annotate cells
-    for i in range(len(tools)):
-        for j in range(len(genomes)):
-            v = matrix[i, j]
-            if not np.isnan(v):
-                ax.text(j, i, f"{v:.2f}", ha="center", va="center",
-                        fontsize=8, color="white" if v > 0.7 else "black")
-
-    plt.colorbar(im, ax=ax, shrink=0.7, label="F1 score")
 
 
 # ── Panel B: robustness bar chart ─────────────────────────────────────────────
@@ -233,14 +239,14 @@ def build_report(metrics_dir: Path, robustness_dir: Path,
     ax_rrna = fig.add_subplot(gs[0, 0])
     ax_trna = fig.add_subplot(gs[0, 1])
     if rrna_metrics:
-        _f1_heatmap(ax_rrna, rrna_metrics, "rRNA", "A  rRNA — F1 score (vs. RefSeq)")
+        _f1_dotplot(ax_rrna, rrna_metrics, "rRNA", "A  rRNA — F1 score (vs. RefSeq)")
     else:
         ax_rrna.text(0.5, 0.5, "No rRNA metrics available",
                      ha="center", va="center", transform=ax_rrna.transAxes)
         ax_rrna.set_title("A  rRNA — F1 score (vs. RefSeq)")
 
     if trna_metrics:
-        _f1_heatmap(ax_trna, trna_metrics, "tRNA", "B  tRNA — F1 score (vs. RefSeq)")
+        _f1_dotplot(ax_trna, trna_metrics, "tRNA", "B  tRNA — F1 score (vs. RefSeq)")
     else:
         ax_trna.text(0.5, 0.5, "No tRNA metrics available",
                      ha="center", va="center", transform=ax_trna.transAxes)
