@@ -1,5 +1,45 @@
 # Changelog — UbboTELORNA
 
+## [v0.3.0] — 2026-07-22
+
+### Added
+- `--chunk_max_bp` (default 50,000,000): Module 2 rRNA chunking now also
+  flushes a chunk once its cumulative sequence length reaches this many bp,
+  in addition to the existing `--chunk_size` sequence-count threshold
+
+### Fixed
+- Module 2 chunking (`--chunk_size`) only flushed on sequence count.
+  Chromosome-scale assemblies with few, very large sequences (e.g. maize)
+  never reached the count threshold, so the whole genome still landed in a
+  single nhmmer/cmsearch call despite chunking being enabled — the v0.2.0
+  changelog's claim of eliminating the maize memory spike was incomplete.
+  `--chunk_max_bp` (see Added) is the actual fix; verified against a
+  synthetic multi-chromosome genome and confirmed backward-compatible when
+  disabled (`--chunk_max_bp 0`)
+- Benchmark comparator (`benchmark/scripts/compare_annotations.py`) ignored
+  the `array_member`/`array_id` metadata that `--flag_5s_arrays` already
+  produces, so every member of a correctly-detected 5S tandem array was
+  scored as an independent false positive against a sparse reference.
+  Array members sharing an `array_id` are now collapsed into one
+  representative prediction before matching; verified on a synthetic
+  20-copy array (F1: 0.174 → 1.0)
+- Benchmark perf sweep (`benchmark/Snakefile`, `perf_ubbotelorna_sweep`) had
+  no stale-output guard; reruns against an existing `_run` directory
+  silently hit UbboTELORNA's own module-level checkpoints and reported
+  near-instant, near-zero-memory results instead of a genuine measurement.
+  Output directory is now cleared and `--force` is passed before every
+  sweep run
+- Benchmark report's peak-memory panel (`benchmark/scripts/benchmark_report.py`)
+  read only the `threads=1` row per genome instead of the max across the
+  full thread sweep; a single under-sampled reading (Snakemake's benchmark
+  RSS polling can miss the true peak on very short jobs) could report a
+  false near-zero outlier for an entire genome
+
+### Changed
+- Benchmark report's F1 panels (rRNA/tRNA vs. RefSeq) replaced with a
+  connected scatter plot (genomes sorted by F1, one line per tool) instead
+  of an annotated heatmap, for readability at 40-genome scale
+
 ## [v0.2.0] — 2026-07-04
 
 ### Added

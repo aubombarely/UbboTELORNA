@@ -50,7 +50,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.2.0"
+VERSION = "v0.3.0"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
