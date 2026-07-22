@@ -768,6 +768,7 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
                      rfam_dir: Path | None, mxsize: float, search_tool: str,
                      workdir: Path, results: Path,
                      prefix: str, force: bool, chunk_size: int = 200,
+                     chunk_max_bp: int = 50_000_000,
                      flag_5s_arrays: bool = True, min_5s_copies: int = 5,
                      max_5s_gap: int = 5000, cap_5s: int = 0) -> Path:
     """Run nhmmer (default) or cmsearch and write rRNA GFF3."""
@@ -793,29 +794,46 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
 
     if chunk_size > 0:
         # ── Chunked execution: stream genome, run tool per batch ──────────────
-        _log(f"  Chunked mode: {chunk_size} sequences per chunk")
+        # Chunks flush on whichever limit is hit first: sequence count
+        # (chunk_size) or cumulative bp (chunk_max_bp). The bp cap matters
+        # for chromosome-scale assemblies with few, very large sequences —
+        # those would otherwise never reach chunk_size and the whole genome
+        # would land in one chunk, defeating the point of chunking.
+        bp_desc = f", max {chunk_max_bp:,} bp/chunk" if chunk_max_bp > 0 else ""
+        _log(f"  Chunked mode: {chunk_size} sequences per chunk{bp_desc}")
         all_hits:     list = []
         chunk_buf:    list = []
         chunk_idx          = 0
         total_seqs         = 0
+        chunk_bp           = 0
+
+        def _chunk_full() -> bool:
+            if chunk_size > 0 and len(chunk_buf) >= chunk_size:
+                return True
+            if chunk_max_bp > 0 and chunk_bp >= chunk_max_bp:
+                return True
+            return False
 
         for name, seq in _iter_fasta(search_fa):
             chunk_buf.append((name, seq))
+            chunk_bp   += len(seq)
             total_seqs += 1
-            if len(chunk_buf) >= chunk_size:
+            if _chunk_full():
                 chunk_idx += 1
                 _log(f"  Processing chunk {chunk_idx} "
-                     f"({len(chunk_buf)} seqs, total so far: {total_seqs})")
+                     f"({len(chunk_buf)} seqs, {chunk_bp:,} bp, "
+                     f"total so far: {total_seqs})")
                 all_hits.extend(
                     _run_single_chunk(chunk_buf, chunk_idx, tool, search_tool,
                                       model_file, threads, evalue, mxsize, workdir)
                 )
                 chunk_buf = []
+                chunk_bp  = 0
 
         if chunk_buf:
             chunk_idx += 1
             _log(f"  Processing chunk {chunk_idx} "
-                 f"({len(chunk_buf)} seqs, total: {total_seqs})")
+                 f"({len(chunk_buf)} seqs, {chunk_bp:,} bp, total: {total_seqs})")
             all_hits.extend(
                 _run_single_chunk(chunk_buf, chunk_idx, tool, search_tool,
                                   model_file, threads, evalue, mxsize, workdir)
@@ -2132,6 +2150,15 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Sequences per chunk fed to nhmmer/cmsearch "
                           "(default: 200; set to 0 to disable chunking and "
                           "pass the full genome to the tool in one run)")
+    gen.add_argument("--chunk_max_bp", type=int, default=50_000_000,
+                     help="Also flush a chunk once its cumulative sequence "
+                          "length reaches this many bp (default: 50,000,000), "
+                          "regardless of --chunk_size. Chromosome-scale "
+                          "assemblies with few, very large sequences never "
+                          "reach the sequence-count threshold, so the whole "
+                          "genome would otherwise land in a single chunk; "
+                          "this caps peak nhmmer/cmsearch memory on those "
+                          "genomes. Set to 0 to disable the bp cap.")
     gen.add_argument("--force", action="store_true",
                      help="Rerun all steps even if outputs already exist")
     gen.add_argument("--dry_run", action="store_true",
@@ -2173,7 +2200,10 @@ def main() -> None:
     _log(f"  Output dir  : {run_dir}")
     _log(f"  Kingdom     : {args.kingdom}")
     _log(f"  rRNA tool   : {args.search_tool}")
-    _log(f"  Chunk size  : {args.chunk_size if args.chunk_size > 0 else 'disabled'}")
+    chunk_desc = args.chunk_size if args.chunk_size > 0 else "disabled"
+    if args.chunk_max_bp > 0:
+        chunk_desc = f"{chunk_desc} (max {args.chunk_max_bp:,} bp/chunk)"
+    _log(f"  Chunk size  : {chunk_desc}")
     _log(f"  Threads     : {args.threads}")
     genome_size = _fasta_total_length(args.fasta)
     _log(f"  Genome size : {genome_size:,} bp")
@@ -2287,6 +2317,7 @@ def main() -> None:
             prefix           = prefix,
             force            = args.force,
             chunk_size       = args.chunk_size,
+            chunk_max_bp     = args.chunk_max_bp,
             flag_5s_arrays   = args.flag_5s_arrays,
             min_5s_copies    = args.s5_array_min_copies,
             max_5s_gap       = args.s5_array_max_gap,
