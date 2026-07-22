@@ -193,7 +193,7 @@ def _perf_runtime(ax, rows: list) -> None:
 
 
 def _perf_memory(ax, rows: list) -> None:
-    """Peak RSS vs genome size across all genomes at default threads."""
+    """Peak RSS vs genome size across all genomes, max across the thread sweep."""
     tools = ["ubbotelorna_nhmmer", "barrnap"]
 
     # sizes in MB — approximate from config; read from data
@@ -202,11 +202,15 @@ def _perf_memory(ax, rows: list) -> None:
     for tool in tools:
         pts = []
         for i, genome in enumerate(genome_order):
-            match = [r for r in rows
-                     if r["genome"] == genome and r["tool"] == tool and r["max_rss"]]
-            if match:
-                rss_mb = float(match[0]["max_rss"])
-                pts.append((i, rss_mb / 1024))  # MB → GB
+            # Take the max across all sampled thread counts rather than a single
+            # (arbitrary) row: Snakemake's benchmark RSS sampling is periodic and
+            # can under-sample very short-lived jobs, so any single thread-count
+            # reading can occasionally miss the true peak.
+            rss_values = [float(r["max_rss"]) for r in rows
+                          if r["genome"] == genome and r["tool"] == tool
+                          and r["max_rss"] and r["max_rss"] != "NA"]
+            if rss_values:
+                pts.append((i, max(rss_values) / 1024))  # MB → GB
         if pts:
             xs, ys = zip(*pts)
             c = _TOOL_COLOURS.get(tool, _C_GREY)
