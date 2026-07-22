@@ -35,8 +35,19 @@ def _parse_attrs(s: str) -> dict:
 
 
 def _load_gff3(path: Path, feature_type: str) -> dict:
-    """Return {seqname: [(start, end, strand, subtype), ...]} sorted by start."""
+    """Return {seqname: [(start, end, strand, subtype), ...]} sorted by start.
+
+    For rRNA, predicted 5S tandem-array members (flagged by UbboTELORNA's
+    --flag_5s_arrays post-filter with array_member=true;array_id=arrXXXX)
+    are collapsed into a single representative feature per array before
+    matching. Without this, a correctly-detected array of N real 5S copies
+    is counted as N independent predictions — since a sparse reference
+    typically annotates only one representative copy per array, every
+    member beyond the first becomes its own false positive, punishing
+    correct array detection as if it were N-1 separate errors.
+    """
     records = defaultdict(list)
+    array_groups: dict[tuple, list] = defaultdict(list)  # (seqname, array_id) -> members
     feature_type_lc = feature_type.lower()
     with open(path) as fh:
         for line in fh:
@@ -68,7 +79,21 @@ def _load_gff3(path: Path, feature_type: str) -> dict:
                 subtype = name or "tRNA_unknown"
             else:
                 subtype = feature_type_lc
-            records[seqname].append((start, end, strand, subtype))
+
+            array_id = attrs.get("array_id") if feature_type_lc == "rrna" else None
+            if array_id:
+                array_groups[(seqname, array_id)].append((start, end, strand, subtype))
+            else:
+                records[seqname].append((start, end, strand, subtype))
+
+    # Collapse each detected array into one representative feature spanning
+    # its full extent, so it counts as a single prediction during matching.
+    for (seqname, _array_id), members in array_groups.items():
+        starts  = [m[0] for m in members]
+        ends    = [m[1] for m in members]
+        strand  = members[0][2]
+        subtype = members[0][3]
+        records[seqname].append((min(starts), max(ends), strand, subtype))
 
     for seqname in records:
         records[seqname].sort(key=lambda x: x[0])
