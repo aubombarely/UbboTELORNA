@@ -1,5 +1,28 @@
 # Changelog — UbboTELORNA
 
+## [v0.3.1] — 2026-07-24
+
+### Fixed
+- Module 0 telomere repeat-unit auto-detection (`_detect_repeat_unit`) could
+  return a degenerate homopolymer (e.g. `AAAAA`) instead of the real
+  telomeric motif, causing Module 0 to report zero telomeres on genomes that
+  genuinely have them (observed on a real Citrus sinensis assembly:
+  `--telomere_repeat TTTAGGG` found real, high-density hits — including a
+  clean 2,233bp array at the very start of one scaffold — that auto-detection
+  had missed entirely). Root cause: the previous implementation pooled raw
+  k-mer counts across all sequences and k-mer lengths with no complexity
+  filter, so a trivial homopolymer could structurally outcompete a real but
+  sparser telomeric signal. Fixed by (1) excluding low-complexity/homopolymer
+  k-mers from candidacy outright (`_is_low_complexity`), and (2) requiring
+  the winning k-mer to show a genuine unbroken tandem run
+  (`_kmer_max_run`, >= `min_tandem_copies` consecutive copies) in at least
+  `min_seq_support` distinct sequences, rather than picking whatever is
+  globally most frequent when pooled. Validated against synthetic scenarios
+  with realistic nucleotide composition, including a direct reproduction of
+  the original bug (homopolymer-padded sequence ends, no real telomere
+  anywhere) and a sparse-signal case (telomere present in only 2 of 60
+  sequences).
+
 ## [v0.3.0] — 2026-07-22
 
 ### Added

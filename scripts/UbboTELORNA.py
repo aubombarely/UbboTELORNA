@@ -50,7 +50,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.3.0"
+VERSION = "v0.3.1"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -397,37 +397,128 @@ def _kmer_density(seq: str, repeat_unit: str) -> float:
     return covered / n
 
 
+def _kmer_max_run(seq: str, repeat_unit: str) -> int:
+    """Length (bp) of the longest *unbroken* run of consecutive repeat-unit
+    matches (any rotation/strand) in seq. Unlike _kmer_density (which sums
+    coverage across the whole window regardless of clustering), this is the
+    real signature of a genuine tandem array as opposed to scattered
+    coincidental matches: compositional noise can rack up nontrivial
+    cumulative density from isolated hits spread across a window, but it
+    essentially never produces a long *unbroken* run of consecutive copies
+    the way an actual telomeric repeat array does."""
+    ku   = repeat_unit.upper()
+    rots = _all_rotations(ku) | _all_rotations(_revcomp(ku))
+    k    = len(ku)
+    n    = len(seq)
+    if n < k:
+        return 0
+    su = seq.upper()
+    i = 0
+    best_run = 0
+    cur_run = 0
+    while i <= n - k:
+        if su[i:i + k] in rots:
+            cur_run += k
+            best_run = max(best_run, cur_run)
+            i += k
+        else:
+            cur_run = 0
+            i += 1
+    return best_run
+
+
+def _is_low_complexity(kmer: str) -> bool:
+    """True if kmer is dominated by a single-character run (homopolymer or
+    near-homopolymer, e.g. AAAAA or AAAAT). These trivially over-count in
+    AT-rich terminal sequence regardless of whether a genuine tandem repeat
+    is present, and would otherwise structurally outcompete a real but
+    shorter-period telomeric motif in the k-mer count."""
+    k = len(kmer)
+    max_run = 1
+    run = 1
+    for i in range(1, k):
+        if kmer[i] == kmer[i - 1]:
+            run += 1
+            max_run = max(max_run, run)
+        else:
+            run = 1
+    return max_run >= k - 1
+
+
 def _detect_repeat_unit(seqs,
                         window: int,
-                        k_range: tuple[int, ...] = (5, 6, 7, 8)) -> str | None:
-    """Return the dominant telomere repeat unit from terminal k-mer counts, or None."""
-    terminal_counter: Counter = Counter()
-    total_bases = 0
+                        k_range: tuple[int, ...] = (5, 6, 7, 8),
+                        min_seq_support: int = 2,
+                        min_tandem_copies: int = 4) -> str | None:
+    """Return the dominant telomere repeat unit from terminal k-mer analysis,
+    or None.
 
-    for _name, seq in seqs:
-        ends = []
+    A naive "most frequent k-mer" approach is vulnerable to compositional
+    bias: in AT-rich terminal sequence, a short, non-homopolymer k-mer can
+    accumulate a high raw occurrence count -- or even high *cumulative*
+    density -- purely by chance, from scattered hits spread across a window,
+    without reflecting a genuine tandemly repeated array. The real signature
+    of a telomeric repeat is an *unbroken run* of several consecutive copies
+    in a row, which coincidental compositional matches essentially never
+    produce. So every candidate that survives the low-complexity/homopolymer
+    filter is ranked by its longest contiguous run of consecutive matches
+    (`_kmer_max_run`), and the winner must reach at least
+    `min_tandem_copies` consecutive copies (i.e. an unbroken run of
+    `min_tandem_copies * len(kmer)` bp) in at least `min_seq_support`
+    distinct sequences -- so a telomere present on only a handful of
+    scaffolds (the common case in draft-quality assemblies) isn't
+    outcompeted by compositional noise pooled across many non-telomeric
+    sequence ends.
+    """
+    # Stage 1 (cheap): track which distinct sequences each complexity-filtered
+    # candidate appears in at all (raw presence, not yet checked for tandem
+    # structure). This is a necessary-but-not-sufficient pre-filter that
+    # prunes the vast majority of one-off candidates -- with realistic
+    # (diverse) sequence composition, the number of distinct candidate
+    # k-mers surviving just the complexity filter can be very large, and
+    # running the expensive contiguous-run scan (stage 2) against every one
+    # of them, against every sequence, does not scale.
+    candidate_presence: dict[str, set[str]] = {}
+    # Bounded memory: only the (small) terminal windows are retained per
+    # sequence, not the full sequence, preserving the streaming/one-genome-
+    # in-memory-at-a-time design intent of the caller.
+    terminal_regions: list[tuple[str, list[str]]] = []
+
+    for name, seq in seqs:
         w    = min(window, len(seq))
-        ends.append(seq[:w])
+        ends = [seq[:w]]
         if len(seq) > w:
             ends.append(seq[-w:])
+        terminal_regions.append((name, ends))
         for region in ends:
-            total_bases += len(region)
             ru = region.upper()
             for k in k_range:
                 for i in range(len(ru) - k + 1):
                     kmer = ru[i:i + k]
-                    if set(kmer) <= set("ACGT"):
-                        terminal_counter[_canonical(kmer)] += 1
+                    if set(kmer) <= set("ACGT") and not _is_low_complexity(kmer):
+                        candidate_presence.setdefault(_canonical(kmer), set()).add(name)
 
-    if not terminal_counter:
+    if not candidate_presence:
         return None
 
-    # Normalise by number of sequences and pick the most frequent canonical k-mer
-    top_kmer, top_count = terminal_counter.most_common(1)[0]
-    # Require it to be meaningfully enriched (> 0.5 % of terminal bases)
-    if top_count / max(total_bases, 1) < 0.005:
+    support_floor = min(min_seq_support, len(terminal_regions))
+    # Stage 2 (expensive, only for candidates that cleared stage 1): confirm
+    # a genuine unbroken tandem run, not just scattered presence.
+    shortlist = [k for k, names in candidate_presence.items() if len(names) >= support_floor]
+
+    best_kmer, best_support = None, 0
+    for kmer in shortlist:
+        min_run_bp = min_tandem_copies * len(kmer)
+        support = sum(
+            1 for _name, ends in terminal_regions
+            if any(_kmer_max_run(region, kmer) >= min_run_bp for region in ends)
+        )
+        if support > best_support:
+            best_kmer, best_support = kmer, support
+
+    if best_kmer is None or best_support < support_floor:
         return None
-    return top_kmer
+    return best_kmer
 
 
 # ── Module 0: Telomere identification ─────────────────────────────────────────
