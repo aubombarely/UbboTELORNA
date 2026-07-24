@@ -11,6 +11,11 @@ Annotates three classes of ancient, conserved genomic elements:
   Module 3  tRNA annotation          — ARAGORN
   Module 4  Integration              — merged GFF3 + summary table
   Module 5  Visualization            — ideogram, subtype bars, composition donut
+  Module 6  Evolutionary analysis    — rRNA scores, tRNA pseudogenes, tandem arrays
+  Module 7  Subtelomeric tandem repeats — TRF scan of scaffold-end windows;
+                                       corroborates Module 0 telomere calls and
+                                       classifies every scaffold end into a
+                                       telomere-completeness tier
 
 Named after Ubbo-Sathla (Clark Ashton Smith / H.P. Lovecraft Mythos), the
 primordial source of all terrestrial life — mirroring telomeres, rDNA, and
@@ -50,7 +55,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.3.1"
+VERSION = "v0.4.0"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -2077,6 +2082,223 @@ def run_module6_evolution(fasta: Path,
                         out_base, plot_formats, prefix)
 
 
+# ── Module 7: Subtelomeric tandem repeats ─────────────────────────────────────
+#
+# Corroborating evidence for telomere calls, and a coarse genome-completeness
+# signal at chromosome ends: subtelomeric satellite/tandem-repeat arrays are
+# commonly (not universally) found adjacent to true telomeres in eukaryotic
+# genomes, and can still be present even where the assembly stops just short
+# of a fully resolved canonical telomere array, or where that array is too
+# degraded for Module 0's strict k-mer scan to call confidently. Every
+# scaffold end is classified into one of three completeness tiers:
+#   Tier 1  Module 0 found a confirmed telomere.
+#   Tier 2  No confirmed telomere, but a genuine tandem repeat (TRF) was
+#           found in the terminal window -- some evidence of proximity to a
+#           chromosome end, though weaker than a direct telomere call.
+#   Tier 3  Neither -- no evidence either way.
+
+_TRF_PARAMS = ("2", "7", "7", "80", "10", "50", "2000")  # match mismatch delta PM PI minscore maxperiod
+_TRF_DAT_RE = re.compile(
+    r"^(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+"
+)
+
+
+def _write_terminal_windows_fasta(fasta: Path, window_bp: int,
+                                  out_fasta: Path) -> dict:
+    """Stream the genome once and write a small FASTA of just the terminal
+    (5'/3') windows of every sequence, with synthetic headers
+    '{seqname}::5prime' / '{seqname}::3prime' so TRF hits can be mapped back
+    to (seqname, end, offset). Returns {synthetic_header: (seqname, end_label,
+    offset_bp)} for coordinate translation. Bounded memory: only the (small)
+    terminal windows are ever held/written, never the full genome."""
+    offsets: dict = {}
+    with open(out_fasta, "w") as out:
+        for name, seq in _iter_fasta(fasta):
+            length = len(seq)
+            for end_label, region_seq, offset in [
+                ("5prime", seq[:window_bp], 0),
+                ("3prime", seq[max(0, length - window_bp):], max(0, length - window_bp)),
+            ]:
+                if not region_seq:
+                    continue
+                header = f"{name}::{end_label}"
+                offsets[header] = (name, end_label, offset)
+                out.write(f">{header}\n{region_seq}\n")
+    return offsets
+
+
+def _run_trf(windows_fasta: Path, workdir: Path) -> Path | None:
+    """Run TRF on the terminal-windows FASTA; return the .dat output path, or
+    None if TRF did not produce one.
+
+    TRF is a known quirk among wrapped tools: it returns a non-zero exit
+    code on ordinary *success* (the code reflects the number of repeats
+    found), so it is invoked directly rather than through the shared _run()
+    helper, which would otherwise treat that as a hard failure. TRF also
+    names its own output file from the input filename + parameter string
+    (e.g. 'input.fa.2.7.7.80.10.50.2000.dat'), which is awkward to predict
+    exactly across TRF versions -- so the real output file is found by
+    globbing workdir for '*.dat' after the run, with cwd=workdir controlling
+    where TRF's side-effect files land (per the shared tool-wrapping
+    convention used elsewhere in this pipeline)."""
+    trf = _require_tool("trf")
+    cmd = [trf, str(windows_fasta.resolve()), *_TRF_PARAMS, "-d", "-h"]
+    _log(f"  $ {' '.join(cmd)}")
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                   text=True, cwd=workdir)
+    dat_files = sorted(workdir.glob("*.dat"))
+    if not dat_files:
+        _log("  WARNING: TRF did not produce a .dat output file — "
+             "skipping subtelomeric tandem repeat detection")
+        return None
+    return dat_files[0]
+
+
+def _parse_trf_dat(dat_path: Path) -> dict:
+    """Parse a TRF .dat file into {synthetic_header: [hit dicts]}."""
+    hits: dict = {}
+    current = None
+    with open(dat_path) as fh:
+        for line in fh:
+            if line.startswith("Sequence:"):
+                current = line.split(":", 1)[1].strip().split()[0]
+                hits.setdefault(current, [])
+                continue
+            if current is None:
+                continue
+            m = _TRF_DAT_RE.match(line)
+            if not m:
+                continue
+            start, end, period, copies_str = m.group(1), m.group(2), m.group(3), m.group(4)
+            pct_matches = m.group(6)
+            hits[current].append({
+                "start":       int(start),
+                "end":         int(end),
+                "period":      int(period),
+                "copies":      float(copies_str),
+                "pct_matches": int(pct_matches),
+            })
+    return hits
+
+
+def run_module7_subtelomeric(fasta: Path, tel_gff: Path | None,
+                             window_bp: int, min_copies: float,
+                             results: Path, workdir: Path,
+                             prefix: str, force: bool) -> tuple[Path, Path, dict]:
+    """Scan terminal windows for subtelomeric tandem repeats (TRF), and
+    classify every scaffold end into a telomere-completeness tier.
+    Returns (gff3_path, summary_tsv_path, counts)."""
+    out_gff3 = results / f"mod07_subtelomeric_{prefix}.gff3"
+    out_tsv  = results / f"mod07_completeness_{prefix}.tsv"
+    if _checkpoint(out_gff3, "subtelomeric-scan", force) and out_tsv.exists():
+        return out_gff3, out_tsv, {}
+
+    seq_lengths = _fasta_seq_lengths(fasta)
+    _log(f"  {len(seq_lengths)} sequences")
+
+    # Which (seqname, end) pairs already have a confirmed Module 0 telomere?
+    confirmed_ends: set = set()
+    if tel_gff is not None and tel_gff.exists():
+        with open(tel_gff) as fh:
+            for line in fh:
+                if line.startswith("#") or not line.strip():
+                    continue
+                cols = line.rstrip("\n").split("\t")
+                if len(cols) < 9:
+                    continue
+                name_attr = _gff3_name(line)  # e.g. "telomere_5prime"
+                if name_attr.startswith("telomere_"):
+                    end_label = name_attr[len("telomere_"):]
+                    confirmed_ends.add((cols[0], end_label))
+    _log(f"  Confirmed telomeres (Module 0): {len(confirmed_ends)} scaffold end(s)")
+
+    windows_fasta = workdir / "subtelomeric_windows.fasta"
+    offsets = _write_terminal_windows_fasta(fasta, window_bp, windows_fasta)
+
+    dat_path = _run_trf(windows_fasta, workdir)
+    trf_hits_by_header = _parse_trf_dat(dat_path) if dat_path is not None else {}
+
+    records: list = []
+    summary_rows: list = []
+    tel_count = 0
+    tier_counts = {1: 0, 2: 0, 3: 0}
+
+    for name, length in seq_lengths.items():
+        for end_label in ("5prime", "3prime"):
+            header = f"{name}::{end_label}"
+            if header not in offsets:
+                continue  # scaffold too short to have this end scanned
+            _, _, offset = offsets[header]
+            has_telomere = (name, end_label) in confirmed_ends
+
+            hits = [h for h in trf_hits_by_header.get(header, [])
+                   if h["copies"] >= min_copies]
+            best_hit = max(hits, key=lambda h: h["copies"], default=None)
+
+            if has_telomere:
+                tier = 1
+            elif best_hit is not None:
+                tier = 2
+            else:
+                tier = 3
+            tier_counts[tier] += 1
+
+            for h in hits:
+                tel_count += 1
+                abs_s = offset + h["start"]
+                abs_e = offset + h["end"]
+                attrs = {
+                    "ID":           f"subtel_{name}_{end_label}_{tel_count}",
+                    "Name":         f"subtelomeric_repeat_{end_label}",
+                    "period_size":  h["period"],
+                    "copy_number":  f"{h['copies']:.1f}",
+                    "pct_matches":  h["pct_matches"],
+                }
+                records.append(
+                    _gff3_record(name, "UbboTELORNA", "subtelomeric_tandem_repeat",
+                                 abs_s, abs_e, h["pct_matches"], ".", ".", attrs)
+                )
+
+            summary_rows.append({
+                "seqname":            name,
+                "end":                end_label,
+                "seq_length_bp":      length,
+                "tier":               tier,
+                "confirmed_telomere": "yes" if has_telomere else "no",
+                "best_period_bp":     best_hit["period"] if best_hit else "",
+                "best_copy_number":   f"{best_hit['copies']:.1f}" if best_hit else "",
+            })
+
+    records.sort(key=_gff3_sort_key)
+    with open(out_gff3, "w") as fh:
+        fh.write(_GFF3_HEADER)
+        for r in records:
+            fh.write(r + "\n")
+
+    with open(out_tsv, "w") as fh:
+        fh.write("seqname\tend\tseq_length_bp\ttier\tconfirmed_telomere\t"
+                 "best_period_bp\tbest_copy_number\n")
+        for row in summary_rows:
+            fh.write("\t".join(str(row[k]) for k in
+                     ("seqname", "end", "seq_length_bp", "tier",
+                      "confirmed_telomere", "best_period_bp", "best_copy_number")) + "\n")
+
+    n_ends = sum(tier_counts.values())
+    pct = {t: (100.0 * c / n_ends if n_ends else 0.0) for t, c in tier_counts.items()}
+    _log(f"  Subtelomeric tandem repeats found: {tel_count}")
+    _log(f"  Scaffold-end completeness — "
+        f"Tier 1 (confirmed telomere): {tier_counts[1]} ({pct[1]:.1f}%), "
+        f"Tier 2 (subtelomeric support only): {tier_counts[2]} ({pct[2]:.1f}%), "
+        f"Tier 3 (neither): {tier_counts[3]} ({pct[3]:.1f}%)")
+
+    counts = {
+        "n_subtelomeric":  tel_count,
+        "tier_counts":     {str(k): v for k, v in tier_counts.items()},
+        "tier_pct":        {str(k): round(v, 1) for k, v in pct.items()},
+    }
+    return out_gff3, out_tsv, counts
+
+
 # ── Run log and carbon tracker helpers ───────────────────────────────────────
 
 def _open_run_log(logs_dir: Path) -> Path:
@@ -2161,6 +2383,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "  2  rRNA annotation          (nhmmer [default] or cmsearch + Rfam profiles)\n"
             "  3  tRNA annotation          (ARAGORN)\n"
             "  4  Integration              (merged GFF3 + summary table)\n"
+            "  5  Visualization            (ideogram, subtype bars, composition donut)\n"
+            "  6  Evolutionary analysis    (rRNA scores, tRNA pseudogenes, tandem arrays)\n"
+            "  7  Subtelomeric tandem repeats (TRF; telomere-completeness tiering)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -2181,6 +2406,18 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Minimum repeat density to call a telomere (default: 0.5)")
     tel.add_argument("--telomere_min_len", type=int, default=100,
                      help="Minimum telomere length to report (default: 100 bp)")
+
+    subtel = ap.add_argument_group("Module 7 — Subtelomeric tandem repeats")
+    subtel.add_argument("--subtelomeric_window_bp", type=int, default=20_000,
+                        help="bp to scan at each scaffold end for subtelomeric "
+                             "tandem repeats via TRF (default: 20000). Larger "
+                             "than --telomere_window since satellite arrays can "
+                             "sit further from the true terminus than the "
+                             "telomere repeat itself.")
+    subtel.add_argument("--subtelomeric_min_copies", type=float, default=3.0,
+                        help="Minimum tandem copy number (as reported by TRF) "
+                             "for a repeat to be reported and counted toward "
+                             "Tier 2 completeness (default: 3.0)")
 
     rrna = ap.add_argument_group("Module 2 — rRNA")
     rrna.add_argument("--kingdom", choices=["euka", "bacteria", "archaea"],
@@ -2226,7 +2463,8 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Comma-separated list of module numbers to skip "
                           "(e.g. --skip_module 0,1,2). "
                           "0=telomere  1=masking  2=rRNA  3=tRNA  "
-                          "4=integration  5=visualization  6=evolution. "
+                          "4=integration  5=visualization  6=evolution  "
+                          "7=subtelomeric tandem repeats. "
                           "Skipped modules are not rerun, but their outputs "
                           "from previous runs are picked up automatically.")
     gen.add_argument("--format", default="pdf",
@@ -2346,6 +2584,9 @@ def main() -> None:
             _log(f"    [5] Visualization ({args.sort_sequences})  →  results/mod05_plot_*.{fmt0}")
         if 6 not in skip_modules:
             _log("    [6] Evolutionary analysis       →  results/mod06_*.tsv + mod06_evolution_*")
+        if 7 not in skip_modules:
+            _log("    [7] Subtelomeric tandem repeats (TRF)  →  "
+                 "results/mod07_subtelomeric_*.gff3 + mod07_completeness_*.tsv")
         _log("  Exiting (--dry_run).")
         if _LOG_FH:
             _LOG_FH.close()
@@ -2375,6 +2616,27 @@ def main() -> None:
             tel_window  = args.telomere_window,
             tel_density = args.telomere_density,
             tel_min_len = args.telomere_min_len,
+            results     = results,
+            workdir     = workdir,
+            prefix      = prefix,
+            force       = args.force,
+        )
+
+    # ── Module 7: Subtelomeric tandem repeats ─────────────────────────────────
+    # Runs right after Module 0, the only module it depends on -- it uses
+    # tel_gff to know which scaffold ends already have a confirmed telomere.
+    # Kept separate from Module 4 (Integration)'s merged tel/rRNA/tRNA GFF3;
+    # not folded in there since that module's existing contract wasn't part
+    # of this addition's scope.
+    subtel_gff = results / f"mod07_subtelomeric_{prefix}.gff3"
+    subtel_counts: dict = {}
+    if not _skip(7, "subtelomeric tandem repeats", subtel_gff):
+        _banner("Module 7 — Subtelomeric Tandem Repeats")
+        subtel_gff, _subtel_tsv, subtel_counts = run_module7_subtelomeric(
+            fasta       = args.fasta,
+            tel_gff     = tel_gff,
+            window_bp   = args.subtelomeric_window_bp,
+            min_copies  = args.subtelomeric_min_copies,
             results     = results,
             workdir     = workdir,
             prefix      = prefix,
@@ -2522,6 +2784,19 @@ def main() -> None:
                 "len_by_type":     counts.get("trna_len_by_type", {}),
             },
         } if counts else {},
+        "telomere_completeness": {
+            "total_subtelomeric_repeats": subtel_counts.get("n_subtelomeric", 0),
+            "scaffold_ends": {
+                "tier1_confirmed_telomere":       subtel_counts.get("tier_counts", {}).get("1", 0),
+                "tier2_subtelomeric_support_only": subtel_counts.get("tier_counts", {}).get("2", 0),
+                "tier3_neither":                   subtel_counts.get("tier_counts", {}).get("3", 0),
+            },
+            "scaffold_ends_pct": {
+                "tier1_confirmed_telomere":       subtel_counts.get("tier_pct", {}).get("1", 0.0),
+                "tier2_subtelomeric_support_only": subtel_counts.get("tier_pct", {}).get("2", 0.0),
+                "tier3_neither":                   subtel_counts.get("tier_pct", {}).get("3", 0.0),
+            },
+        } if subtel_counts else {},
         "resource_usage": {
             "wall_clock_s":       round(elapsed_s, 1),
             "peak_mem_mb":        round(peak_mem_mb, 1),

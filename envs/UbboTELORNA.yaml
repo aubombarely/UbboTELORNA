@@ -12,5 +12,6 @@ dependencies:
   - aragorn           # tRNA annotation (Module 3)
   - tantan            # low-complexity masking (Module 1)
   - matplotlib        # visualization (Module 5)
+  - trf               # subtelomeric tandem repeat detection (Module 7)
   - pip:
     - codecarbon      # carbon footprint tracking (pip build avoids pkg_resources issues)

@@ -1,5 +1,46 @@
 # Changelog — UbboTELORNA
 
+## [v0.4.0] — 2026-07-24
+
+### Added
+- **Module 7 — Subtelomeric tandem repeats**: scans the terminal window of
+  every scaffold end with TRF (Tandem Repeats Finder) and classifies each
+  end into a telomere-completeness tier: Tier 1 (Module 0 confirmed a
+  telomere), Tier 2 (no confirmed telomere, but a genuine tandem repeat
+  array was found nearby — some evidence of proximity to a chromosome end),
+  or Tier 3 (neither). Motivation: subtelomeric satellite/tandem-repeat
+  arrays are commonly (not universally) found adjacent to true telomeres in
+  eukaryotic genomes, and can still be present even where the assembly
+  stops just short of a fully resolved canonical telomere array, or where
+  that array is too degraded for Module 0's strict k-mer scan to call
+  confidently — giving a coarse, non-authoritative signal of how close an
+  unresolved scaffold end may be to a true chromosome terminus.
+  - New outputs: `results/mod07_subtelomeric_{prefix}.gff3`
+    (`subtelomeric_tandem_repeat` features) and
+    `results/mod07_completeness_{prefix}.tsv` (one row per scaffold end:
+    seqname, end, length, tier, confirmed_telomere, best TRF hit period/copy
+    number).
+  - New `run_summary.json` section `telomere_completeness`, with a
+    genome-wide rollup of scaffold ends per tier (count and %).
+  - New flags: `--subtelomeric_window_bp` (default 20,000 — larger than
+    `--telomere_window` since satellite arrays can sit further from the
+    true terminus than the telomere repeat itself), `--subtelomeric_min_copies`
+    (default 3.0 — minimum TRF-reported tandem copy number to count as a hit).
+  - Runs immediately after Module 0 (its only dependency — needs Module 0's
+    GFF3 to know which scaffold ends already have a confirmed telomere) and
+    is included in `--skip_module`/`--dry_run` like every other module.
+  - New dependency: `trf` (added to `envs/UbboTELORNA.yaml`). TRF is invoked
+    directly rather than through the shared `_run()` helper, since it
+    returns a non-zero exit code on ordinary success (a known TRF quirk) —
+    success is instead detected by the presence of its `.dat` output file.
+  - Validated: window-extraction/offset logic, `.dat` parsing, and the full
+    tiering orchestration were unit-tested directly (including an
+    end-to-end run with the TRF subprocess call stubbed out, confirming
+    correct GFF3/TSV/rollup output for all three tiers). The real TRF
+    subprocess invocation itself is **not yet validated against the actual
+    binary** — TRF is not available in this development environment; test
+    on a real genome before relying on it.
+
 ## [v0.3.1] — 2026-07-24
 
 ### Fixed
