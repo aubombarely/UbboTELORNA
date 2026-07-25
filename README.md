@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/version-v0.3.0-teal"/>
+<img src="https://img.shields.io/badge/version-v0.6.0-teal"/>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue"/>
 <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey"/>
-<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.3.0-orange"/></a>
+<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.6.0-orange"/></a>
 </p>
 
 ---
@@ -31,8 +31,8 @@ low-complexity pattern such as a telomeric repeat (`ACACAC…`, `TTTAGGG…`).
 UbboTELORNA solves this by:
 
 1. **Identifying telomeres first** (Module 0) — pure-Python k-mer scan, no external dependencies.
-2. **Masking low-complexity regions** (Module 1) — `tantan` soft-mask before any search tool runs.
-3. **Flexible rRNA search** (Module 2) — `nhmmer` (default, fast, low memory) or Infernal
+2. **Masking low-complexity regions** (Module 2) — `tantan` soft-mask before any search tool runs.
+3. **Flexible rRNA search** (Module 3) — `nhmmer` (default, fast, low memory) or Infernal
    `cmsearch` (higher sensitivity) via `--search_tool`.
 
 See [docs/about_rrna_identification.md](docs/about_rrna_identification.md) for a detailed
@@ -53,12 +53,13 @@ emissions via `codecarbon`, not just wall-clock time.
 | Module | Step | Tool | Output |
 |---|---|---|---|
 | 0 | Telomere identification | Custom k-mer scan | `mod00_telomeres_{prefix}.gff3` |
-| 1 | Low-complexity masking | tantan | `workdir/masked_soft.fasta`, `workdir/masked_hard.fasta` |
-| 2 | rRNA annotation | nhmmer (default) or cmsearch + Rfam profiles | `mod02_rRNA_{prefix}.gff3` |
-| 3 | tRNA annotation | ARAGORN | `mod03_tRNA_{prefix}.gff3` |
-| 4 | Integration | — | `mod04_annotation_{prefix}.gff3`, `mod04_summary_{prefix}.tsv` |
-| 5 | Visualization | matplotlib | `mod05_plot_{prefix}.{pdf\|png\|svg}` |
-| 6 | Evolutionary analysis | cmsearch RF00005 + custom Python | `mod06_rrna_scores_{prefix}.tsv`, `mod06_trna_class_{prefix}.tsv`, `mod06_arrays_{prefix}.tsv`, `mod06_evolution_{prefix}.{pdf\|png\|svg}` |
+| 1 | Subtelomeric tandem repeats | TRF | `mod01_subtelomeric_{prefix}.gff3`, `mod01_completeness_{prefix}.tsv` |
+| 2 | Low-complexity masking | tantan | `workdir/masked_soft.fasta`, `workdir/masked_hard.fasta` |
+| 3 | rRNA annotation | nhmmer (default) or cmsearch + Rfam profiles | `mod03_rRNA_{prefix}.gff3` |
+| 4 | tRNA annotation | ARAGORN | `mod04_tRNA_{prefix}.gff3` |
+| 5 | Integration | — | `mod05_annotation_{prefix}.gff3`, `mod05_summary_{prefix}.tsv` |
+| 6 | Visualization | matplotlib | `mod06_plot_{prefix}.{pdf\|png\|svg}` |
+| 7 | Evolutionary analysis | cmsearch RF00005 + custom Python | `mod07_rrna_scores_{prefix}.tsv`, `mod07_trna_class_{prefix}.tsv`, `mod07_arrays_{prefix}.tsv`, `mod07_evolution_{prefix}.{pdf\|png\|svg}` |
 
 ### Rfam models used
 
@@ -97,11 +98,11 @@ conda activate ubbotelorna
 | Dependency | Role | Install |
 |---|---|---|
 | Python ≥ 3.10 | Runtime | included in conda env |
-| `tantan` | Low-complexity masking (Module 1) | `conda install -c bioconda tantan` |
-| `hmmer` (`nhmmer`) | rRNA annotation — default (Module 2) | `conda install -c bioconda hmmer` |
-| `infernal` (`cmsearch`) | rRNA annotation — alternative (Module 2) | `conda install -c bioconda infernal` |
-| `aragorn` | tRNA annotation (Module 3) | `conda install -c bioconda aragorn` |
-| `matplotlib` | Visualization (Module 5) | `conda install -c conda-forge matplotlib` |
+| `tantan` | Low-complexity masking (Module 2) | `conda install -c bioconda tantan` |
+| `hmmer` (`nhmmer`) | rRNA annotation — default (Module 3) | `conda install -c bioconda hmmer` |
+| `infernal` (`cmsearch`) | rRNA annotation — alternative (Module 3) | `conda install -c bioconda infernal` |
+| `aragorn` | tRNA annotation (Module 4) | `conda install -c bioconda aragorn` |
+| `matplotlib` | Visualization (Module 6) | `conda install -c conda-forge matplotlib` |
 | `codecarbon` | Carbon footprint tracking (optional) | `conda install -c conda-forge codecarbon` |
 
 ---
@@ -142,7 +143,7 @@ UbboTELORNA.py --fasta FASTA --output DIR [options]
 | `--telomere_density` | 0.5 | Minimum repeat density (0–1) to call a telomere |
 | `--telomere_min_len` | 100 | Minimum telomere length to report (bp) |
 
-### Module 2 — rRNA annotation
+### Module 3 — rRNA annotation
 
 | Flag | Default | Description |
 |---|---|---|
@@ -160,7 +161,7 @@ comparison of the two tools.
 | Flag | Default | Description |
 |---|---|---|
 | `--threads` | 4 | CPU threads for the rRNA search tool |
-| `--skip_module` | — | Comma-separated module numbers to skip: `0`=telomere `1`=masking `2`=rRNA `3`=tRNA `4`=integration `5`=visualization `6`=evolution (e.g. `--skip_module 0,1,2`) |
+| `--skip_module` | — | Comma-separated module numbers to skip: `0`=telomere `1`=subtelomeric tandem repeats `2`=masking `3`=rRNA `4`=tRNA `5`=integration `6`=visualization `7`=evolution (e.g. `--skip_module 0,1,2`) |
 | `--format` | `pdf` | Plot format(s): `pdf`, `png`, `svg` — comma-separated |
 | `--top_sequences` | `50` | Number of sequences shown in the ideogram |
 | `--sort_sequences` | `length` | Ideogram sequence order: `length` (longest first) or `seqid` (natural Chr1/Chr2/… sort) |
@@ -177,15 +178,17 @@ comparison of the two tools.
 {output}/
 ├── results/
 │   ├── mod00_telomeres_{prefix}.gff3       Telomere features (Module 0)
-│   ├── mod02_rRNA_{prefix}.gff3            rRNA features (Module 2)
-│   ├── mod03_tRNA_{prefix}.gff3            tRNA features (Module 3)
-│   ├── mod04_annotation_{prefix}.gff3      Combined GFF3 (Module 4)
-│   ├── mod04_summary_{prefix}.tsv          Detailed feature summary (count, length, % genome)
-│   ├── mod05_plot_{prefix}.pdf             Visualization figure (Module 5; format set by --format)
-│   ├── mod06_rrna_scores_{prefix}.tsv      Per-copy rRNA bit scores (Module 6a)
-│   ├── mod06_trna_class_{prefix}.tsv       tRNA functional/pseudogene classification (Module 6b)
-│   ├── mod06_arrays_{prefix}.tsv           Tandem array table with spacing stats (Module 6c)
-│   ├── mod06_evolution_{prefix}.pdf        Evolutionary analysis figure (Module 6d)
+│   ├── mod01_subtelomeric_{prefix}.gff3    Subtelomeric tandem repeats (Module 1)
+│   ├── mod01_completeness_{prefix}.tsv     Telomere-completeness tiering (Module 1)
+│   ├── mod03_rRNA_{prefix}.gff3            rRNA features (Module 3)
+│   ├── mod04_tRNA_{prefix}.gff3            tRNA features (Module 4)
+│   ├── mod05_annotation_{prefix}.gff3      Combined GFF3 (Module 5)
+│   ├── mod05_summary_{prefix}.tsv          Detailed feature summary (count, length, % genome)
+│   ├── mod06_plot_{prefix}.pdf             Visualization figure (Module 6; format set by --format)
+│   ├── mod07_rrna_scores_{prefix}.tsv      Per-copy rRNA bit scores (Module 7a)
+│   ├── mod07_trna_class_{prefix}.tsv       tRNA functional/pseudogene classification (Module 7b)
+│   ├── mod07_arrays_{prefix}.tsv           Tandem array table with spacing stats (Module 7c)
+│   ├── mod07_evolution_{prefix}.pdf        Evolutionary analysis figure (Module 7d)
 │   └── {prefix}.run_summary.json           Run metadata and resource usage
 ├── workdir/
 │   ├── masked_soft.fasta                   Soft-masked FASTA (tantan lowercase)
@@ -216,7 +219,7 @@ ID=tRNA_{n};Name=tRNA-Phe(GAA);anticodon=GAA
 
 ### Summary TSV
 
-`results/mod04_summary_{prefix}.tsv` contains one row per subtype plus a
+`results/mod05_summary_{prefix}.tsv` contains one row per subtype plus a
 `TOTAL` row for each feature class.  All GFF3 outputs are sorted by SeqID
 (natural order, so `Chr2 < Chr10`) then by start coordinate.
 
@@ -243,10 +246,10 @@ tRNA            tRNA-Gly             289      21675              0.0031
 
 ---
 
-## Visualization (Module 5)
+## Visualization (Module 6)
 
-`results/mod05_plot_{prefix}.pdf` is a three-panel figure generated
-automatically at the end of every run (unless `--skip_module5` is set).
+`results/mod06_plot_{prefix}.pdf` is a three-panel figure generated
+automatically at the end of every run (unless `--skip_module 6` is set).
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -289,13 +292,13 @@ size in Mb is printed in the donut hole.  Percentages are derived from the
 ```bash
 # Save as PNG and SVG instead of PDF
 python3 scripts/UbboTELORNA.py --fasta genome.fasta --output run/ \
-    --skip_module0 --skip_module1 --skip_module2 --skip_module3 \
+    --skip_module0 --skip_module2 --skip_module3 --skip_module4 \
     --skip_integration \
     --format png,svg
 
 # Sort sequences by chromosome name (Chr1, Chr2 … Chr20) rather than size
 python3 scripts/UbboTELORNA.py --fasta genome.fasta --output run/ \
-    --skip_module 0,1,2,3,4 \
+    --skip_module 0,2,3,4,5 \
     --sort_sequences seqid
 
 # Show more scaffolds (e.g. fragmented assembly)
@@ -314,27 +317,27 @@ corner of the ideogram includes the count for each feature type.
 
 ---
 
-## Evolutionary analysis (Module 6)
+## Evolutionary analysis (Module 7)
 
-Module 6 interrogates the existing GFF3 outputs from Modules 2 and 3 to
+Module 7 interrogates the existing GFF3 outputs from Modules 3 and 4 to
 characterise sequence divergence, pseudogene content, and tandem array
 organisation.  It requires no new external annotation tools beyond
 Infernal (already a dependency) and runs in minutes on the outputs of a
 completed pipeline.
 
-### 6a — rRNA bit score distribution
+### 7a — rRNA bit score distribution
 
-Each rRNA copy in `mod02_rRNA_{prefix}.gff3` already carries the bit score
-assigned by nhmmer or cmsearch.  Module 6a aggregates these into
-`mod06_rrna_scores_{prefix}.tsv` and plots per-subtype histograms.  The
+Each rRNA copy in `mod03_rRNA_{prefix}.gff3` already carries the bit score
+assigned by nhmmer or cmsearch.  Module 7a aggregates these into
+`mod07_rrna_scores_{prefix}.tsv` and plots per-subtype histograms.  The
 bit-score distribution reveals the proportion of high-confidence
 (functional) vs. low-scoring (degenerate / pseudogenic) copies for each
 rRNA class.
 
-### 6b — tRNA pseudogene classification
+### 7b — tRNA pseudogene classification
 
 ARAGORN detects tRNA structural patterns but does not formally classify
-pseudogenes.  Module 6b:
+pseudogenes.  Module 7b:
 
 1. Extracts each tRNA sequence from the genome FASTA using the GFF3
    coordinates (streaming; peak memory = one chromosome).
@@ -346,10 +349,10 @@ pseudogenes.  Module 6b:
    - Unrecognised anticodon (`???` in ARAGORN output)
    - Length outside 50–150 bp
 
-Results are written to `mod06_trna_class_{prefix}.tsv` with per-copy
+Results are written to `mod07_trna_class_{prefix}.tsv` with per-copy
 scores and reasons.
 
-### 6c — Tandem array detection
+### 7c — Tandem array detection
 
 Consecutive features within a distance threshold are clustered into
 arrays:
@@ -359,7 +362,7 @@ arrays:
 | rRNA | 50 kb | 2 |
 | tRNA | 10 kb | 2 |
 
-Each array is summarised in `mod06_arrays_{prefix}.tsv`:
+Each array is summarised in `mod07_arrays_{prefix}.tsv`:
 
 ```
 feature_class  array_id  seqname  array_start  array_end  n_copies
@@ -373,7 +376,7 @@ the array, computed as `min(n_SSU, n_5.8S, n_LSU)` for eukaryotes or
 distribution (median spacing ≈ IGS + gene length) gives an estimate of
 the rDNA repeat unit size.
 
-### 6d — Evolution figure
+### 7d — Evolution figure
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -385,19 +388,19 @@ the rDNA repeat unit size.
 └────────────────────────────┴───────────────┴─────────────┘
 ```
 
-### Running Module 6 on an existing annotation
+### Running Module 7 on an existing annotation
 
 ```bash
 python3 scripts/UbboTELORNA.py \
     --fasta       genome.fasta \
     --output      annotation_run/ \
-    --skip_module 0,1,2,3,4,5 \
+    --skip_module 0,1,2,3,4,5,6 \
     --format      png,pdf \
     --threads     8
 ```
 
-Modules 0–5 are skipped; their existing GFF3 outputs are picked up
-automatically.  Only Module 6 runs.
+Modules 0–6 are skipped; their existing GFF3 outputs are picked up
+automatically.  Only Module 7 runs.
 
 ---
 
@@ -499,13 +502,13 @@ python3 scripts/UbboTELORNA.py \
 grep "telomere" annotation_run/results/mod00_telomeres_*.gff3 | wc -l
 
 # 5. Check rRNA counts
-grep -v "^#" annotation_run/results/mod02_rRNA_*.gff3 \
+grep -v "^#" annotation_run/results/mod03_rRNA_*.gff3 \
     | cut -f9 | grep -oP 'Name=\K[^;]+' | sort | uniq -c | sort -rn
 
 # 6. View the summary table and figure
-cat annotation_run/results/mod04_summary_*.tsv
-# open annotation_run/results/mod05_plot_*.pdf    # macOS
-# evince annotation_run/results/mod05_plot_*.pdf  # Linux
+cat annotation_run/results/mod05_summary_*.tsv
+# open annotation_run/results/mod06_plot_*.pdf    # macOS
+# evince annotation_run/results/mod06_plot_*.pdf  # Linux
 
 # 7. Resume from checkpoint (if run was interrupted)
 python3 scripts/UbboTELORNA.py \
@@ -535,7 +538,7 @@ python3 scripts/UbboTELORNA.py \
 python3 scripts/UbboTELORNA.py \
     --fasta         genome.fasta \
     --output        annotation_run/ \
-    --skip_module   0,1,2,3,4 \
+    --skip_module   0,2,3,4,5 \
     --format        png,pdf \
     --top_sequences 100
 ```
@@ -553,11 +556,11 @@ python3 scripts/UbboTELORNA.py \
     --kingdom euka \
     --threads 2
 
-# Offline (no internet): skip Module 2 rRNA annotation
+# Offline (no internet): skip Module 3 rRNA annotation
 python3 scripts/UbboTELORNA.py \
     --fasta        test/test_genome.fasta \
     --output       test_run_offline/ \
-    --skip_module  2 \
+    --skip_module  3 \
     --threads 2
 ```
 
@@ -569,7 +572,7 @@ See `test/README.md` for expected outputs.
 
 UbboTELORNA is a drop-in replacement for the barrnap + tRNAscan-SE step in
 [YuggASMoth](../YuggASMoth/) (Module 1).  Use the combined GFF3 output
-(`mod04_annotation_{prefix}.gff3`) directly as the rDNA/tRNA annotation input
+(`mod05_annotation_{prefix}.gff3`) directly as the rDNA/tRNA annotation input
 to YuggASMoth's filtering step.
 
 ---

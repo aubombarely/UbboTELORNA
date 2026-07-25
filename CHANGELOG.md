@@ -1,5 +1,107 @@
 # Changelog — UbboTELORNA
 
+## [v0.6.0] — 2026-07-25
+
+### Changed
+- **Renumbered all modules to match their actual execution order in
+  `main()`.** Module 7 (Subtelomeric tandem repeats, added in v0.4.0) has
+  always run immediately after Module 0 (it depends on Module 0's telomere
+  GFF3), but kept the number "7" — confusing anyone reading the module list
+  top-to-bottom against the log output. The numbers now read 0-7 in the
+  order the modules actually execute:
+  - `0` Telomere identification — unchanged
+  - `7` → `1` Subtelomeric tandem repeats
+  - `1` → `2` Low-complexity masking
+  - `2` → `3` rRNA annotation
+  - `3` → `4` tRNA annotation
+  - `4` → `5` Integration
+  - `5` → `6` Visualization
+  - `6` → `7` Evolutionary analysis
+- **BREAKING: output filenames changed for every module except Module 0.**
+  Anyone scripting against specific `results/mod0N_*` filenames from a
+  prior run must update those references:
+  `mod07_subtelomeric_*.gff3` / `mod07_completeness_*.tsv` →
+  `mod01_subtelomeric_*.gff3` / `mod01_completeness_*.tsv`;
+  `mod02_rRNA_*.gff3` → `mod03_rRNA_*.gff3`;
+  `mod02_5s_arrays_*.tsv` → `mod03_5s_arrays_*.tsv`;
+  `mod03_tRNA_*.gff3` → `mod04_tRNA_*.gff3`;
+  `mod04_annotation_*.gff3` → `mod05_annotation_*.gff3`;
+  `mod04_summary_*.tsv` → `mod05_summary_*.tsv`;
+  `mod05_plot_*.{pdf,png,svg}` → `mod06_plot_*.{pdf,png,svg}`;
+  `mod06_rrna_scores_*.tsv` → `mod07_rrna_scores_*.tsv`;
+  `mod06_trna_class_*.tsv` → `mod07_trna_class_*.tsv`;
+  `mod06_arrays_*.tsv` → `mod07_arrays_*.tsv`;
+  `mod06_evolution_*.{pdf,png,svg}` → `mod07_evolution_*.{pdf,png,svg}`.
+  `mod00_telomeres_*.gff3` and `mod00_summary_*.tsv` (Module 0) are
+  unchanged, as are the unprefixed `workdir/masked_soft.fasta` /
+  `workdir/masked_hard.fasta` (Module 2 masking). Existing output
+  directories from prior runs are **not** migrated automatically — rerun
+  with `--force`, or manually rename files, if you depend on the new
+  naming scheme.
+- **`--skip_module` numbering changed to match**: what was
+  `--skip_module 7` (subtelomeric) is now `--skip_module 1`, and so on per
+  the mapping above. Update any saved commands or scripts accordingly.
+- Renamed internal functions to match: `run_module7_subtelomeric` →
+  `run_module1_subtelomeric`, `run_module1_masking` → `run_module2_masking`,
+  `run_module2_rrna` → `run_module3_rrna`, `run_module3_trna` →
+  `run_module4_trna`, `run_module4_integration` →
+  `run_module5_integration`, `run_module5_plot` → `run_module6_plot`,
+  `run_module6_evolution` → `run_module7_evolution`. No functional changes
+  — labels, filenames, banners, and argparse group titles only.
+
+## [v0.5.0] — 2026-07-25
+
+### Changed
+- **Module 0 telomere repeat-unit auto-detection rewritten around TRF**,
+  replacing the from-scratch Python k-mer scanner (low-complexity filtering
+  + contiguous-run counting). Observed on a real Citrus sinensis genome:
+  the k-mer scanner picked a compositionally-generic-but-spurious motif
+  (`AATAA`) over the true telomere repeat (`TTTAGGG`) — "most sequences
+  with some support" doesn't distinguish a real, terminus-concentrated
+  signal from AT-rich background noise diffused across the (10,000bp)
+  scan window — and took over two hours to do it (exhaustively checking
+  every complexity-filtered candidate's contiguous run against every
+  sequence does not scale). TRF (compiled C, purpose-built for
+  unknown-period tandem repeat detection, already a dependency via
+  Module 7) is both more robust to imperfect/degenerate repeat copies
+  and dramatically faster than an exact-match k-mer scan.
+  - New `_select_telomere_candidate_trf()`: among TRF hits whose period
+    falls in the canonical telomere range (4-12bp, distinguishing it from
+    longer-period subtelomeric satellites), picks the consensus sequence
+    supported by the most distinct sequences.
+  - New `--telomere_detect_window` (default 5000bp) controls the
+    auto-detection scan window, deliberately smaller than
+    `--telomere_window` (used for extent-scanning once the repeat unit is
+    known) — detection close to the true terminus avoids diffuse
+    subtelomeric/intergenic sequence outcompeting the real signal.
+  - Removed now-dead code: `_detect_repeat_unit`, `_is_low_complexity`,
+    `_kmer_max_run` (the from-scratch scanner and its helpers).
+  - `_parse_trf_dat` (shared with Module 7) now also captures the TRF
+    consensus repeat sequence.
+
+### Added
+- **Module 0 summary table** (`mod00_summary_{prefix}.tsv`): one row per
+  scaffold end (seqname, end, found, start, end_pos, length_bp, density,
+  repeat_unit) — previously Module 0 only wrote a GFF3, with no
+  standalone aggregate view (unlike Module 7's completeness table).
+  Works independently of Module 7.
+
+### Validated
+- `_select_telomere_candidate_trf`: correctly prefers a short-period,
+  multi-sequence-supported telomere motif over a long-period subtelomeric
+  satellite in the same hit set, and correctly returns `None` when support
+  is below `min_seq_support`.
+- Full `run_module0_telomeres` orchestration (TRF stubbed, same pattern as
+  Module 7's tests): correctly detects the repeat unit from synthetic TRF
+  hits, writes correct GFF3 + summary TSV, and correctly reports
+  `found=no` for a scaffold with no telomere.
+- Re-ran Module 7's existing orchestration test to confirm the shared TRF
+  parsing helpers (now returning an additional `consensus` field) didn't
+  regress Module 7's behavior.
+- **Not yet validated against the real TRF binary for Module 0
+  specifically** (only Module 7's real-TRF run has been confirmed so far) —
+  test on real data before trusting auto-detection results.
+
 ## [v0.4.0] — 2026-07-24
 
 ### Added

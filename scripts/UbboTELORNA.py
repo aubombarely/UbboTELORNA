@@ -4,18 +4,20 @@ UbboTELORNA.py  —  Telomere, rRNA, and tRNA annotation for genome assemblies.
 
 Annotates three classes of ancient, conserved genomic elements:
 
-  Module 0  Telomere identification  — k-mer density scan at contig ends
-  Module 1  Low-complexity masking   — tantan soft-mask (prevents search failures
-                                       on telomeric and repetitive sequences)
-  Module 2  rRNA annotation          — nhmmer (default) or cmsearch + Rfam profiles
-  Module 3  tRNA annotation          — ARAGORN
-  Module 4  Integration              — merged GFF3 + summary table
-  Module 5  Visualization            — ideogram, subtype bars, composition donut
-  Module 6  Evolutionary analysis    — rRNA scores, tRNA pseudogenes, tandem arrays
-  Module 7  Subtelomeric tandem repeats — TRF scan of scaffold-end windows;
+  Module 0  Telomere identification  — TRF-based repeat-unit auto-detection
+                                       (or user-supplied) + k-mer density
+                                       extent scan at contig ends
+  Module 1  Subtelomeric tandem repeats — TRF scan of scaffold-end windows;
                                        corroborates Module 0 telomere calls and
                                        classifies every scaffold end into a
                                        telomere-completeness tier
+  Module 2  Low-complexity masking   — tantan soft-mask (prevents search failures
+                                       on telomeric and repetitive sequences)
+  Module 3  rRNA annotation          — nhmmer (default) or cmsearch + Rfam profiles
+  Module 4  tRNA annotation          — ARAGORN
+  Module 5  Integration              — merged GFF3 + summary table
+  Module 6  Visualization            — ideogram, subtype bars, composition donut
+  Module 7  Evolutionary analysis    — rRNA scores, tRNA pseudogenes, tandem arrays
 
 Named after Ubbo-Sathla (Clark Ashton Smith / H.P. Lovecraft Mythos), the
 primordial source of all terrestrial life — mirroring telomeres, rDNA, and
@@ -55,7 +57,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.4.0"
+VERSION = "v0.6.0"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -402,126 +404,50 @@ def _kmer_density(seq: str, repeat_unit: str) -> float:
     return covered / n
 
 
-def _kmer_max_run(seq: str, repeat_unit: str) -> int:
-    """Length (bp) of the longest *unbroken* run of consecutive repeat-unit
-    matches (any rotation/strand) in seq. Unlike _kmer_density (which sums
-    coverage across the whole window regardless of clustering), this is the
-    real signature of a genuine tandem array as opposed to scattered
-    coincidental matches: compositional noise can rack up nontrivial
-    cumulative density from isolated hits spread across a window, but it
-    essentially never produces a long *unbroken* run of consecutive copies
-    the way an actual telomeric repeat array does."""
-    ku   = repeat_unit.upper()
-    rots = _all_rotations(ku) | _all_rotations(_revcomp(ku))
-    k    = len(ku)
-    n    = len(seq)
-    if n < k:
-        return 0
-    su = seq.upper()
-    i = 0
-    best_run = 0
-    cur_run = 0
-    while i <= n - k:
-        if su[i:i + k] in rots:
-            cur_run += k
-            best_run = max(best_run, cur_run)
-            i += k
-        else:
-            cur_run = 0
-            i += 1
-    return best_run
+# Telomere repeat-unit auto-detection previously used a from-scratch Python
+# k-mer scanner here (low-complexity filtering + contiguous-run counting).
+# It was replaced with a TRF-based approach (see _select_telomere_candidate_trf
+# and its use in run_module0_telomeres below) for two reasons, both observed
+# on a real genome: (1) correctness -- the k-mer approach still picked a
+# compositionally-common-but-spurious motif (AATAA) over the true telomere
+# repeat, because "most sequences with some support" doesn't distinguish a
+# real, terminus-concentrated signal from noise diffused across a large
+# (10kb) scan window; (2) performance -- exhaustively checking every
+# surviving candidate's contiguous run against every sequence took over two
+# hours on a real 313 Mb genome. TRF (compiled C, purpose-built for
+# unknown-period tandem repeat detection, already a dependency via Module 1)
+# is both faster and more robust to imperfect/degenerate repeat copies than
+# an exact-match k-mer scan.
 
 
-def _is_low_complexity(kmer: str) -> bool:
-    """True if kmer is dominated by a single-character run (homopolymer or
-    near-homopolymer, e.g. AAAAA or AAAAT). These trivially over-count in
-    AT-rich terminal sequence regardless of whether a genuine tandem repeat
-    is present, and would otherwise structurally outcompete a real but
-    shorter-period telomeric motif in the k-mer count."""
-    k = len(kmer)
-    max_run = 1
-    run = 1
-    for i in range(1, k):
-        if kmer[i] == kmer[i - 1]:
-            run += 1
-            max_run = max(max_run, run)
-        else:
-            run = 1
-    return max_run >= k - 1
+def _select_telomere_candidate_trf(trf_hits_by_header: dict, offsets: dict,
+                                   min_period: int = 4, max_period: int = 12,
+                                   min_seq_support: int = 2) -> str | None:
+    """Given TRF hits from a terminal-window scan, pick the best candidate
+    telomere repeat unit: among hits whose period falls in the canonical
+    telomere range (min_period-max_period bp -- e.g. TTAGGG=6bp,
+    TTTAGGG=7bp -- distinguishing it from longer-period subtelomeric
+    satellites), the consensus sequence supported by the most distinct
+    sequences wins, requiring support from at least min_seq_support
+    sequences so a genome-wide compositional fluke can't win over a real but
+    narrowly-distributed telomere."""
+    support: dict[str, set[str]] = {}
+    for header, hits in trf_hits_by_header.items():
+        if header not in offsets:
+            continue
+        name, _end_label, _offset = offsets[header]
+        for h in hits:
+            if not (min_period <= h["period"] <= max_period):
+                continue
+            consensus = h.get("consensus", "").upper()
+            if not consensus or set(consensus) - set("ACGT"):
+                continue
+            support.setdefault(_canonical(consensus), set()).add(name)
 
-
-def _detect_repeat_unit(seqs,
-                        window: int,
-                        k_range: tuple[int, ...] = (5, 6, 7, 8),
-                        min_seq_support: int = 2,
-                        min_tandem_copies: int = 4) -> str | None:
-    """Return the dominant telomere repeat unit from terminal k-mer analysis,
-    or None.
-
-    A naive "most frequent k-mer" approach is vulnerable to compositional
-    bias: in AT-rich terminal sequence, a short, non-homopolymer k-mer can
-    accumulate a high raw occurrence count -- or even high *cumulative*
-    density -- purely by chance, from scattered hits spread across a window,
-    without reflecting a genuine tandemly repeated array. The real signature
-    of a telomeric repeat is an *unbroken run* of several consecutive copies
-    in a row, which coincidental compositional matches essentially never
-    produce. So every candidate that survives the low-complexity/homopolymer
-    filter is ranked by its longest contiguous run of consecutive matches
-    (`_kmer_max_run`), and the winner must reach at least
-    `min_tandem_copies` consecutive copies (i.e. an unbroken run of
-    `min_tandem_copies * len(kmer)` bp) in at least `min_seq_support`
-    distinct sequences -- so a telomere present on only a handful of
-    scaffolds (the common case in draft-quality assemblies) isn't
-    outcompeted by compositional noise pooled across many non-telomeric
-    sequence ends.
-    """
-    # Stage 1 (cheap): track which distinct sequences each complexity-filtered
-    # candidate appears in at all (raw presence, not yet checked for tandem
-    # structure). This is a necessary-but-not-sufficient pre-filter that
-    # prunes the vast majority of one-off candidates -- with realistic
-    # (diverse) sequence composition, the number of distinct candidate
-    # k-mers surviving just the complexity filter can be very large, and
-    # running the expensive contiguous-run scan (stage 2) against every one
-    # of them, against every sequence, does not scale.
-    candidate_presence: dict[str, set[str]] = {}
-    # Bounded memory: only the (small) terminal windows are retained per
-    # sequence, not the full sequence, preserving the streaming/one-genome-
-    # in-memory-at-a-time design intent of the caller.
-    terminal_regions: list[tuple[str, list[str]]] = []
-
-    for name, seq in seqs:
-        w    = min(window, len(seq))
-        ends = [seq[:w]]
-        if len(seq) > w:
-            ends.append(seq[-w:])
-        terminal_regions.append((name, ends))
-        for region in ends:
-            ru = region.upper()
-            for k in k_range:
-                for i in range(len(ru) - k + 1):
-                    kmer = ru[i:i + k]
-                    if set(kmer) <= set("ACGT") and not _is_low_complexity(kmer):
-                        candidate_presence.setdefault(_canonical(kmer), set()).add(name)
-
-    if not candidate_presence:
+    if not support:
         return None
-
-    support_floor = min(min_seq_support, len(terminal_regions))
-    # Stage 2 (expensive, only for candidates that cleared stage 1): confirm
-    # a genuine unbroken tandem run, not just scattered presence.
-    shortlist = [k for k, names in candidate_presence.items() if len(names) >= support_floor]
-
-    best_kmer, best_support = None, 0
-    for kmer in shortlist:
-        min_run_bp = min_tandem_copies * len(kmer)
-        support = sum(
-            1 for _name, ends in terminal_regions
-            if any(_kmer_max_run(region, kmer) >= min_run_bp for region in ends)
-        )
-        if support > best_support:
-            best_kmer, best_support = kmer, support
-
-    if best_kmer is None or best_support < support_floor:
+    best_kmer = max(support, key=lambda k: len(support[k]))
+    if len(support[best_kmer]) < min_seq_support:
         return None
     return best_kmer
 
@@ -530,39 +456,46 @@ def _detect_repeat_unit(seqs,
 
 def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
                           tel_window: int, tel_density: float,
-                          tel_min_len: int,
+                          tel_min_len: int, tel_detect_window: int,
                           results: Path, workdir: Path,
-                          prefix: str, force: bool) -> tuple[Path, str | None]:
-    """Scan contig ends for telomeric repeats; return (gff3_path, repeat_unit_used)."""
+                          prefix: str, force: bool) -> tuple[Path, Path, str | None]:
+    """Scan contig ends for telomeric repeats; return (gff3_path,
+    summary_tsv_path, repeat_unit_used)."""
     out_gff3 = results / f"mod00_telomeres_{prefix}.gff3"
-    if _checkpoint(out_gff3, "telomere-scan", force):
+    out_tsv  = results / f"mod00_summary_{prefix}.tsv"
+    if _checkpoint(out_gff3, "telomere-scan", force) and out_tsv.exists():
         # Try to recover the repeat unit from existing GFF3
         with open(out_gff3) as fh:
             for line in fh:
                 if line.startswith("##repeat-unit"):
-                    return out_gff3, line.split()[-1]
-        return out_gff3, repeat_unit
+                    return out_gff3, out_tsv, line.split()[-1]
+        return out_gff3, out_tsv, repeat_unit
 
     # Count sequences with a single cheap pass (no sequence data loaded)
     n_seqs = sum(1 for line in open(fasta) if line.startswith(">"))
     _log(f"  Found {n_seqs} sequences")
 
     if repeat_unit is None:
-        _log("  Auto-detecting telomere repeat unit …")
-        # Pass 1: streaming auto-detection — one sequence in memory at a time
-        repeat_unit = _detect_repeat_unit(_iter_fasta(fasta), tel_window)
+        _log("  Auto-detecting telomere repeat unit (TRF) …")
+        detect_fasta = workdir / "telomere_detect_windows.fasta"
+        offsets = _write_terminal_windows_fasta(fasta, tel_detect_window, detect_fasta)
+        dat_path = _run_trf(detect_fasta, workdir)
+        trf_hits = _parse_trf_dat(dat_path) if dat_path is not None else {}
+        repeat_unit = _select_telomere_candidate_trf(trf_hits, offsets)
         if repeat_unit is None:
             _log("  WARNING: could not auto-detect repeat unit. "
                  "Provide --telomere_repeat explicitly to enable telomere annotation.")
             out_gff3.write_text(_GFF3_HEADER)
-            return out_gff3, None
+            out_tsv.write_text("seqname\tend\tfound\tstart\tend_pos\tlength_bp\tdensity\trepeat_unit\n")
+            return out_gff3, out_tsv, None
         _log(f"  Detected repeat unit: {repeat_unit}")
     else:
         repeat_unit = repeat_unit.upper()
         _log(f"  Using user-supplied repeat unit: {repeat_unit}")
 
-    records   = []
-    tel_count = 0
+    records      = []
+    summary_rows = []
+    tel_count    = 0
 
     # Pass 2 (or only pass): stream sequences for the telomere scan
     for name, seq in _iter_fasta(fasta):
@@ -573,50 +506,65 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
             ("3prime", seq[max(0, length - tel_window):], max(0, length - tel_window)),
         ]:
             region_seq = region_seq if len(region_seq) >= len(repeat_unit) else ""
-            if not region_seq:
-                continue
+            best_span = None  # (abs_s, abs_e, density) -- longest span for this end
+            if region_seq:
+                # Sliding window to find telomere extent
+                step  = max(1, len(repeat_unit))
+                wsize = len(repeat_unit) * 10   # window = 10 repeats wide
+                rlen  = len(region_seq)
 
-            # Sliding window to find telomere extent
-            step  = max(1, len(repeat_unit))
-            wsize = len(repeat_unit) * 10   # window = 10 repeats wide
-            rlen  = len(region_seq)
+                densities = []
+                for i in range(0, rlen - wsize + 1, step):
+                    d = _kmer_density(region_seq[i:i + wsize], repeat_unit)
+                    densities.append((i, d))
 
-            densities = []
-            for i in range(0, rlen - wsize + 1, step):
-                d = _kmer_density(region_seq[i:i + wsize], repeat_unit)
-                densities.append((i, d))
+                # Merge contiguous windows above threshold
+                tel_spans = []
+                span_start = None
+                for i, d in densities:
+                    if d >= tel_density:
+                        if span_start is None:
+                            span_start = i
+                        span_end = i + wsize
+                    elif span_start is not None:
+                        tel_spans.append((span_start, span_end))
+                        span_start = None
+                if span_start is not None:
+                    tel_spans.append((span_start, rlen))
 
-            # Merge contiguous windows above threshold
-            tel_spans = []
-            span_start = None
-            for i, d in densities:
-                if d >= tel_density:
-                    if span_start is None:
-                        span_start = i
-                    span_end = i + wsize
-                elif span_start is not None:
-                    tel_spans.append((span_start, span_end))
-                    span_start = None
-            if span_start is not None:
-                tel_spans.append((span_start, rlen))
+                for s, e in tel_spans:
+                    abs_s = offset + s + 1   # 1-based GFF3
+                    abs_e = offset + e
+                    if abs_e - abs_s + 1 < tel_min_len:
+                        continue
+                    tel_count += 1
+                    avg_d = _kmer_density(seq[abs_s - 1:abs_e], repeat_unit)
+                    attrs = {
+                        "ID":          f"tel_{name}_{end_label}_{tel_count}",
+                        "Name":        f"telomere_{end_label}",
+                        "repeat_unit": repeat_unit,
+                        "density":     f"{avg_d:.3f}",
+                    }
+                    records.append(
+                        _gff3_record(name, "UbboTELORNA", "telomere",
+                                     abs_s, abs_e, avg_d, ".", ".", attrs)
+                    )
+                    if best_span is None or (abs_e - abs_s) > (best_span[1] - best_span[0]):
+                        best_span = (abs_s, abs_e, avg_d)
 
-            for s, e in tel_spans:
-                abs_s = offset + s + 1   # 1-based GFF3
-                abs_e = offset + e
-                if abs_e - abs_s + 1 < tel_min_len:
-                    continue
-                tel_count += 1
-                avg_d = _kmer_density(seq[abs_s - 1:abs_e], repeat_unit)
-                attrs = {
-                    "ID":          f"tel_{name}_{end_label}_{tel_count}",
-                    "Name":        f"telomere_{end_label}",
-                    "repeat_unit": repeat_unit,
-                    "density":     f"{avg_d:.3f}",
-                }
-                records.append(
-                    _gff3_record(name, "UbboTELORNA", "telomere",
-                                 abs_s, abs_e, avg_d, ".", ".", attrs)
-                )
+            if best_span is not None:
+                summary_rows.append({
+                    "seqname": name, "end": end_label, "found": "yes",
+                    "start": best_span[0], "end_pos": best_span[1],
+                    "length_bp": best_span[1] - best_span[0] + 1,
+                    "density": f"{best_span[2]:.3f}", "repeat_unit": repeat_unit,
+                })
+            else:
+                summary_rows.append({
+                    "seqname": name, "end": end_label, "found": "no",
+                    "start": "", "end_pos": "", "length_bp": "",
+                    "density": "", "repeat_unit": repeat_unit,
+                })
 
     records.sort(key=_gff3_sort_key)
     with open(out_gff3, "w") as fh:
@@ -625,13 +573,20 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
         for r in records:
             fh.write(r + "\n")
 
+    with open(out_tsv, "w") as fh:
+        fh.write("seqname\tend\tfound\tstart\tend_pos\tlength_bp\tdensity\trepeat_unit\n")
+        for row in summary_rows:
+            fh.write("\t".join(str(row[k]) for k in
+                     ("seqname", "end", "found", "start", "end_pos",
+                      "length_bp", "density", "repeat_unit")) + "\n")
+
     _log(f"  Telomeres found: {tel_count}  →  {out_gff3.name}")
-    return out_gff3, repeat_unit
+    return out_gff3, out_tsv, repeat_unit
 
 
-# ── Module 1: Low-complexity masking ─────────────────────────────────────────
+# ── Module 2: Low-complexity masking ─────────────────────────────────────────
 
-def run_module1_masking(fasta: Path, workdir: Path, force: bool) -> Path:
+def run_module2_masking(fasta: Path, workdir: Path, force: bool) -> Path:
     """Soft-mask low-complexity regions with tantan; return path to masked FASTA."""
     masked = workdir / "masked_soft.fasta"
     if _checkpoint(masked, "tantan-masking", force):
@@ -669,7 +624,7 @@ def _hard_masked(workdir: Path) -> Path:
     return workdir / "masked_hard.fasta"
 
 
-# ── Module 2: rRNA annotation (Infernal + Rfam) ───────────────────────────────
+# ── Module 3: rRNA annotation (Infernal + Rfam) ───────────────────────────────
 
 def _ensure_cms(kingdom: str, rfam_dir: Path | None) -> Path:
     """Download (if needed) and return path to a concatenated .cm file for the kingdom."""
@@ -860,7 +815,7 @@ def _run_single_chunk(chunk_records: list, chunk_idx: int,
     return hits
 
 
-def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
+def run_module3_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
                      rfam_dir: Path | None, mxsize: float, search_tool: str,
                      workdir: Path, results: Path,
                      prefix: str, force: bool, chunk_size: int = 200,
@@ -868,7 +823,7 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
                      flag_5s_arrays: bool = True, min_5s_copies: int = 5,
                      max_5s_gap: int = 5000, cap_5s: int = 0) -> Path:
     """Run nhmmer (default) or cmsearch and write rRNA GFF3."""
-    out_gff3  = results / f"mod02_rRNA_{prefix}.gff3"
+    out_gff3  = results / f"mod03_rRNA_{prefix}.gff3"
     tblout    = workdir / f"{search_tool}_rRNA.tblout"
 
     if _checkpoint(out_gff3, f"{search_tool}-rRNA", force):
@@ -994,7 +949,7 @@ def run_module2_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
 def _filter_5s_arrays(gff3_path: Path, prefix: str, results_dir: Path,
                       min_copies: int, max_gap: int, cap: int, force: bool) -> None:
     """Flag 5S rRNA tandem array members in GFF3 attributes and optionally cap per-sequence count."""
-    array_tsv = results_dir / f"mod02_5s_arrays_{prefix}.tsv"
+    array_tsv = results_dir / f"mod03_5s_arrays_{prefix}.tsv"
     if _checkpoint(array_tsv, "5S-array-flagging", force):
         return
 
@@ -1133,7 +1088,7 @@ def _filter_5s_arrays(gff3_path: Path, prefix: str, results_dir: Path,
     _log(f"  5S array TSV: {array_tsv.name}  ({len(array_records)} arrays)")
 
 
-# ── Module 3: tRNA annotation (ARAGORN) ───────────────────────────────────────
+# ── Module 4: tRNA annotation (ARAGORN) ───────────────────────────────────────
 
 _ARAGORN_RE = re.compile(
     r"\s*\d+\s+((?:tRNA|tmRNA|mtRNA|pseudo_tRNA)-\S+)\s+"
@@ -1172,10 +1127,10 @@ def _parse_aragorn(aragorn_out: Path) -> list[dict]:
     return hits
 
 
-def run_module3_trna(fasta: Path, workdir: Path, results: Path,
+def run_module4_trna(fasta: Path, workdir: Path, results: Path,
                      prefix: str, force: bool) -> Path:
     """Run ARAGORN and write tRNA GFF3."""
-    out_gff3   = results / f"mod03_tRNA_{prefix}.gff3"
+    out_gff3   = results / f"mod04_tRNA_{prefix}.gff3"
     aragorn_out = workdir / "aragorn.txt"
 
     if _checkpoint(out_gff3, "ARAGORN-tRNA", force):
@@ -1216,7 +1171,7 @@ def run_module3_trna(fasta: Path, workdir: Path, results: Path,
     return out_gff3
 
 
-# ── Module 4: Integration ─────────────────────────────────────────────────────
+# ── Module 5: Integration ─────────────────────────────────────────────────────
 
 def _collect_and_write_gff3(tel_gff: Path | None, rrna_gff: Path | None,
                              trna_gff: Path | None,
@@ -1245,13 +1200,13 @@ def _collect_and_write_gff3(tel_gff: Path | None, rrna_gff: Path | None,
     return tel_lines, rrna_lines, trna_lines
 
 
-def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
+def run_module5_integration(tel_gff: Path | None, rrna_gff: Path | None,
                              trna_gff: Path | None,
                              results: Path, prefix: str,
                              genome_size: int = 0) -> tuple[Path, dict]:
     """Merge GFF3 files, sort by position, write summary TSV; return (combined_path, counts_dict)."""
-    combined = results / f"mod04_annotation_{prefix}.gff3"
-    summary  = results / f"mod04_summary_{prefix}.tsv"
+    combined = results / f"mod05_annotation_{prefix}.gff3"
+    summary  = results / f"mod05_summary_{prefix}.tsv"
 
     tel_lines, rrna_lines, trna_lines = _collect_and_write_gff3(
         tel_gff, rrna_gff, trna_gff, combined)
@@ -1355,7 +1310,7 @@ def run_module4_integration(tel_gff: Path | None, rrna_gff: Path | None,
     return combined, counts
 
 
-# ── Module 5: Visualization ───────────────────────────────────────────────────
+# ── Module 6: Visualization ───────────────────────────────────────────────────
 
 _C_TEL   = "#F5A623"   # amber  — telomere
 _C_RRNA  = "#4C9BE8"   # blue   — rRNA
@@ -1520,14 +1475,14 @@ def _draw_donut(ax: plt.Axes, summ: dict, genome_size: int) -> None:
     ax.set_title("Genome composition")
 
 
-def run_module5_plot(fasta: Path,
+def run_module6_plot(fasta: Path,
                      tel_gff: Path | None, rrna_gff: Path | None,
                      trna_gff: Path | None, summary_tsv: Path | None,
                      genome_size: int, results: Path, prefix: str,
                      plot_formats: list, top_sequences: int,
                      sort_by: str, force: bool) -> None:
     """Generate 3-panel figure: ideogram, subtype bars, composition donut."""
-    out_base  = results / f"mod05_plot_{prefix}"
+    out_base  = results / f"mod06_plot_{prefix}"
     out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
     if _checkpoint(out_paths[0], "visualization", force):
         return
@@ -1544,7 +1499,7 @@ def run_module5_plot(fasta: Path,
         top_seqs = sorted(seq_lengths.items(), key=lambda x: -x[1])[:top_sequences]
 
     if not top_seqs:
-        _log("  [Module 5] No sequences found — skipping plot")
+        _log("  [Module 6] No sequences found — skipping plot")
         return
 
     max_len = max(slen for _, slen in top_seqs)
@@ -1575,7 +1530,7 @@ def run_module5_plot(fasta: Path,
     plt.close(fig)
 
 
-# ── Module 6: Evolutionary analysis ──────────────────────────────────────────
+# ── Module 7: Evolutionary analysis ──────────────────────────────────────────
 
 _RFAM_TRNA_ACC  = "RF00005"   # universal tRNA covariance model
 _TRNA_CM_SCORE_THRESHOLD = 20.0   # bits — tRNAscan-SE's own pseudogene threshold
@@ -1736,8 +1691,8 @@ def _score_trnas_cmsearch(trna_seqs: dict, cm_path: Path,
                            workdir: Path, threads: int, force: bool) -> dict:
     """Run cmsearch RF00005 against extracted tRNA sequences; return {feat_id: best_bit_score}."""
     cmsearch  = _require_tool("cmsearch")
-    trna_fa   = workdir / "mod06_trna_seqs.fasta"
-    tblout    = workdir / "mod06_trna_cmsearch.tblout"
+    trna_fa   = workdir / "mod07_trna_seqs.fasta"
+    tblout    = workdir / "mod07_trna_cmsearch.tblout"
 
     with open(trna_fa, "w") as fh:
         for feat_id, seq in trna_seqs.items():
@@ -1798,7 +1753,7 @@ def _classify_trnas(records: list, cm_scores: dict) -> list:
     return result
 
 
-# ── Module 6 plots ────────────────────────────────────────────────────────────
+# ── Module 7 plots ────────────────────────────────────────────────────────────
 
 def _plot_evolution(rrna_records: list, trna_classified: list,
                     rrna_arrays: list, trna_arrays: list,
@@ -1919,15 +1874,15 @@ def _plot_evolution(rrna_records: list, trna_classified: list,
     plt.close(fig)
 
 
-# ── Module 6 sub-step helpers ─────────────────────────────────────────────────
+# ── Module 7 sub-step helpers ─────────────────────────────────────────────────
 
 def _run_rrna_score_analysis(rrna_records: list, results: Path,
                               prefix: str, force: bool) -> None:
     """Log rRNA bit score statistics and write score TSV."""
     if not rrna_records:
-        _log("  No rRNA records found — skipping 6a")
+        _log("  No rRNA records found — skipping 7a")
         return
-    rrna_score_tsv = results / f"mod06_rrna_scores_{prefix}.tsv"
+    rrna_score_tsv = results / f"mod07_rrna_scores_{prefix}.tsv"
     if force or not rrna_score_tsv.exists():
         sorted_rrna = sorted(rrna_records,
                              key=lambda r: (_natural_key(r["seqname"]), r["start"]))
@@ -1958,7 +1913,7 @@ def _run_trna_classify_analysis(trna_records: list, fasta: Path,
                                  prefix: str, threads: int, force: bool) -> list:
     """Score, classify tRNA records; write TSV; return classified list."""
     if not trna_records:
-        _log("  No tRNA records found — skipping 6b")
+        _log("  No tRNA records found — skipping 7b")
         return []
     _log(f"  Extracting {len(trna_records):,} tRNA sequences …")
     trna_seqs = _extract_sequences(fasta, trna_records)
@@ -1981,7 +1936,7 @@ def _run_trna_classify_analysis(trna_records: list, fasta: Path,
     for reason, cnt in reason_counts.most_common():
         _log(f"    {reason}: {cnt:,}")
 
-    trna_class_tsv = results / f"mod06_trna_class_{prefix}.tsv"
+    trna_class_tsv = results / f"mod07_trna_class_{prefix}.tsv"
     if force or not trna_class_tsv.exists():
         sorted_trna = sorted(trna_classified,
                              key=lambda t: (_natural_key(t["seqname"]), t["start"]))
@@ -2029,7 +1984,7 @@ def _run_array_analysis(rrna_records: list, trna_records: list,
     else:
         _log("  No tRNA arrays detected")
 
-    arrays_tsv = results / f"mod06_arrays_{prefix}.tsv"
+    arrays_tsv = results / f"mod07_arrays_{prefix}.tsv"
     all_arrays = ([{"feature_class": "rRNA", **a} for a in rrna_arrays] +
                   [{"feature_class": "tRNA", **a} for a in trna_arrays])
     all_arrays.sort(key=lambda a: (_natural_key(a["seqname"]), a["array_start"]))
@@ -2052,29 +2007,29 @@ def _run_array_analysis(rrna_records: list, trna_records: list,
     return rrna_arrays, trna_arrays
 
 
-# ── Module 6 main ─────────────────────────────────────────────────────────────
+# ── Module 7 main ─────────────────────────────────────────────────────────────
 
-def run_module6_evolution(fasta: Path,
+def run_module7_evolution(fasta: Path,
                           rrna_gff: Path, trna_gff: Path,
                           rfam_dir: Path, workdir: Path, results: Path,
                           prefix: str, genome_size: int, threads: int,
                           plot_formats: list, force: bool) -> None:
     """Run evolutionary analysis: rRNA scores, tRNA pseudogene classification, tandem arrays."""
-    _banner("Module 6a — rRNA Score Distribution")
+    _banner("Module 7a — rRNA Score Distribution")
     rrna_records = _parse_gff3_records(rrna_gff)
     _run_rrna_score_analysis(rrna_records, results, prefix, force)
 
-    _banner("Module 6b — tRNA Pseudogene Classification")
+    _banner("Module 7b — tRNA Pseudogene Classification")
     trna_records    = _parse_gff3_records(trna_gff)
     trna_classified = _run_trna_classify_analysis(
         trna_records, fasta, rfam_dir, workdir, results, prefix, threads, force)
 
-    _banner("Module 6c — Tandem Array Detection")
+    _banner("Module 7c — Tandem Array Detection")
     rrna_arrays, trna_arrays = _run_array_analysis(
         rrna_records, trna_records, results, prefix, force)
 
-    _banner("Module 6d — Evolution Plots")
-    out_base  = results / f"mod06_evolution_{prefix}"
+    _banner("Module 7d — Evolution Plots")
+    out_base  = results / f"mod07_evolution_{prefix}"
     out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
     if not _checkpoint(out_paths[0], "evolution plots", force):
         _plot_evolution(rrna_records, trna_classified,
@@ -2082,7 +2037,7 @@ def run_module6_evolution(fasta: Path,
                         out_base, plot_formats, prefix)
 
 
-# ── Module 7: Subtelomeric tandem repeats ─────────────────────────────────────
+# ── Module 1: Subtelomeric tandem repeats ─────────────────────────────────────
 #
 # Corroborating evidence for telomere calls, and a coarse genome-completeness
 # signal at chromosome ends: subtelomeric satellite/tandem-repeat arrays are
@@ -2148,14 +2103,16 @@ def _run_trf(windows_fasta: Path, workdir: Path) -> Path | None:
                    text=True, cwd=workdir)
     dat_files = sorted(workdir.glob("*.dat"))
     if not dat_files:
-        _log("  WARNING: TRF did not produce a .dat output file — "
-             "skipping subtelomeric tandem repeat detection")
+        _log("  WARNING: TRF did not produce a .dat output file")
         return None
     return dat_files[0]
 
 
 def _parse_trf_dat(dat_path: Path) -> dict:
-    """Parse a TRF .dat file into {synthetic_header: [hit dicts]}."""
+    """Parse a TRF .dat file into {synthetic_header: [hit dicts]}. Each hit
+    includes the consensus repeat sequence (TRF's 14th whitespace-delimited
+    field), used both for Module 1's GFF3 attributes and for Module 0's
+    telomere repeat-unit auto-detection."""
     hits: dict = {}
     current = None
     with open(dat_path) as fh:
@@ -2171,25 +2128,28 @@ def _parse_trf_dat(dat_path: Path) -> dict:
                 continue
             start, end, period, copies_str = m.group(1), m.group(2), m.group(3), m.group(4)
             pct_matches = m.group(6)
+            fields = line.split()
+            consensus = fields[13] if len(fields) > 13 else ""
             hits[current].append({
                 "start":       int(start),
                 "end":         int(end),
                 "period":      int(period),
                 "copies":      float(copies_str),
                 "pct_matches": int(pct_matches),
+                "consensus":   consensus,
             })
     return hits
 
 
-def run_module7_subtelomeric(fasta: Path, tel_gff: Path | None,
+def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
                              window_bp: int, min_copies: float,
                              results: Path, workdir: Path,
                              prefix: str, force: bool) -> tuple[Path, Path, dict]:
     """Scan terminal windows for subtelomeric tandem repeats (TRF), and
     classify every scaffold end into a telomere-completeness tier.
     Returns (gff3_path, summary_tsv_path, counts)."""
-    out_gff3 = results / f"mod07_subtelomeric_{prefix}.gff3"
-    out_tsv  = results / f"mod07_completeness_{prefix}.tsv"
+    out_gff3 = results / f"mod01_subtelomeric_{prefix}.gff3"
+    out_tsv  = results / f"mod01_completeness_{prefix}.tsv"
     if _checkpoint(out_gff3, "subtelomeric-scan", force) and out_tsv.exists():
         return out_gff3, out_tsv, {}
 
@@ -2378,14 +2338,14 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Annotate telomeres, rRNA, and tRNA in a genome assembly.\n\n"
             "Modules:\n"
-            "  0  Telomere identification  (k-mer scan at contig ends)\n"
-            "  1  Low-complexity masking   (tantan)\n"
-            "  2  rRNA annotation          (nhmmer [default] or cmsearch + Rfam profiles)\n"
-            "  3  tRNA annotation          (ARAGORN)\n"
-            "  4  Integration              (merged GFF3 + summary table)\n"
-            "  5  Visualization            (ideogram, subtype bars, composition donut)\n"
-            "  6  Evolutionary analysis    (rRNA scores, tRNA pseudogenes, tandem arrays)\n"
-            "  7  Subtelomeric tandem repeats (TRF; telomere-completeness tiering)\n"
+            "  0  Telomere identification  (TRF-based auto-detect + k-mer extent scan)\n"
+            "  1  Subtelomeric tandem repeats (TRF; telomere-completeness tiering)\n"
+            "  2  Low-complexity masking   (tantan)\n"
+            "  3  rRNA annotation          (nhmmer [default] or cmsearch + Rfam profiles)\n"
+            "  4  tRNA annotation          (ARAGORN)\n"
+            "  5  Integration              (merged GFF3 + summary table)\n"
+            "  6  Visualization            (ideogram, subtype bars, composition donut)\n"
+            "  7  Evolutionary analysis    (rRNA scores, tRNA pseudogenes, tandem arrays)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -2401,13 +2361,23 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Known repeat unit (default: auto-detect). "
                           "Example: TTTAGGG (plants), TTAGGG (vertebrates)")
     tel.add_argument("--telomere_window", type=int, default=10_000,
-                     help="bp to scan at each contig end (default: 10000)")
+                     help="bp to scan at each contig end for telomere extent, "
+                          "once the repeat unit is known (default: 10000)")
+    tel.add_argument("--telomere_detect_window", type=int, default=5_000,
+                     help="bp to scan at each contig end for repeat-unit "
+                          "AUTO-DETECTION via TRF (default: 5000; only used "
+                          "when --telomere_repeat is not supplied). Smaller "
+                          "than --telomere_window on purpose: keeping "
+                          "detection close to the true terminus avoids "
+                          "diffuse subtelomeric/intergenic AT-rich sequence "
+                          "outcompeting the real, narrowly-concentrated "
+                          "telomere signal.")
     tel.add_argument("--telomere_density", type=float, default=0.5,
                      help="Minimum repeat density to call a telomere (default: 0.5)")
     tel.add_argument("--telomere_min_len", type=int, default=100,
                      help="Minimum telomere length to report (default: 100 bp)")
 
-    subtel = ap.add_argument_group("Module 7 — Subtelomeric tandem repeats")
+    subtel = ap.add_argument_group("Module 1 — Subtelomeric tandem repeats")
     subtel.add_argument("--subtelomeric_window_bp", type=int, default=20_000,
                         help="bp to scan at each scaffold end for subtelomeric "
                              "tandem repeats via TRF (default: 20000). Larger "
@@ -2419,7 +2389,7 @@ def _build_parser() -> argparse.ArgumentParser:
                              "for a repeat to be reported and counted toward "
                              "Tier 2 completeness (default: 3.0)")
 
-    rrna = ap.add_argument_group("Module 2 — rRNA")
+    rrna = ap.add_argument_group("Module 3 — rRNA")
     rrna.add_argument("--kingdom", choices=["euka", "bacteria", "archaea"],
                       default="euka",
                       help="Organism kingdom — selects Rfam model set (default: euka)")
@@ -2462,9 +2432,9 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--skip_module", default="",
                      help="Comma-separated list of module numbers to skip "
                           "(e.g. --skip_module 0,1,2). "
-                          "0=telomere  1=masking  2=rRNA  3=tRNA  "
-                          "4=integration  5=visualization  6=evolution  "
-                          "7=subtelomeric tandem repeats. "
+                          "0=telomere  1=subtelomeric tandem repeats  2=masking  "
+                          "3=rRNA  4=tRNA  5=integration  6=visualization  "
+                          "7=evolution. "
                           "Skipped modules are not rerun, but their outputs "
                           "from previous runs are picked up automatically.")
     gen.add_argument("--format", default="pdf",
@@ -2567,26 +2537,27 @@ def main() -> None:
         _log(f"  Output      : {run_dir}/")
         _log("  Steps that would run:")
         if 0 not in skip_modules:
-            _log("    [0] Telomere identification  →  results/mod00_telomeres_*.gff3")
+            _log("    [0] Telomere identification  →  "
+                 "results/mod00_telomeres_*.gff3 + mod00_summary_*.tsv")
         if 1 not in skip_modules:
-            _log("    [1] Low-complexity masking   →  workdir/masked_soft.fasta")
+            _log("    [1] Subtelomeric tandem repeats (TRF)  →  "
+                 "results/mod01_subtelomeric_*.gff3 + mod01_completeness_*.tsv")
         if 2 not in skip_modules:
+            _log("    [2] Low-complexity masking   →  workdir/masked_soft.fasta")
+        if 3 not in skip_modules:
             chunk_desc = (f"chunk_size={args.chunk_size}"
                           if args.chunk_size > 0 else "no chunking")
-            _log(f"    [2] rRNA annotation ({args.search_tool}, {chunk_desc})"
-                 f"  →  results/mod02_rRNA_*.gff3")
-        if 3 not in skip_modules:
-            _log("    [3] tRNA annotation          →  results/mod03_tRNA_*.gff3")
+            _log(f"    [3] rRNA annotation ({args.search_tool}, {chunk_desc})"
+                 f"  →  results/mod03_rRNA_*.gff3")
         if 4 not in skip_modules:
-            _log("    [4] Integration              →  results/mod04_annotation_*.gff3")
+            _log("    [4] tRNA annotation          →  results/mod04_tRNA_*.gff3")
         if 5 not in skip_modules:
-            fmt0 = args.format.split(",")[0].strip()
-            _log(f"    [5] Visualization ({args.sort_sequences})  →  results/mod05_plot_*.{fmt0}")
+            _log("    [5] Integration              →  results/mod05_annotation_*.gff3")
         if 6 not in skip_modules:
-            _log("    [6] Evolutionary analysis       →  results/mod06_*.tsv + mod06_evolution_*")
+            fmt0 = args.format.split(",")[0].strip()
+            _log(f"    [6] Visualization ({args.sort_sequences})  →  results/mod06_plot_*.{fmt0}")
         if 7 not in skip_modules:
-            _log("    [7] Subtelomeric tandem repeats (TRF)  →  "
-                 "results/mod07_subtelomeric_*.gff3 + mod07_completeness_*.tsv")
+            _log("    [7] Evolutionary analysis       →  results/mod07_*.tsv + mod07_evolution_*")
         _log("  Exiting (--dry_run).")
         if _LOG_FH:
             _LOG_FH.close()
@@ -2607,32 +2578,34 @@ def main() -> None:
 
     # ── Module 0: Telomere identification ─────────────────────────────────────
     tel_gff     = results / f"mod00_telomeres_{prefix}.gff3"
+    tel_tsv     = results / f"mod00_summary_{prefix}.tsv"
     repeat_used = None
     if not _skip(0, "telomere identification", tel_gff):
         _banner("Module 0 — Telomere Identification")
-        tel_gff, repeat_used = run_module0_telomeres(
-            fasta       = args.fasta,
-            repeat_unit = args.telomere_repeat,
-            tel_window  = args.telomere_window,
-            tel_density = args.telomere_density,
-            tel_min_len = args.telomere_min_len,
-            results     = results,
-            workdir     = workdir,
-            prefix      = prefix,
-            force       = args.force,
+        tel_gff, tel_tsv, repeat_used = run_module0_telomeres(
+            fasta            = args.fasta,
+            repeat_unit      = args.telomere_repeat,
+            tel_window       = args.telomere_window,
+            tel_density      = args.telomere_density,
+            tel_min_len      = args.telomere_min_len,
+            tel_detect_window = args.telomere_detect_window,
+            results          = results,
+            workdir          = workdir,
+            prefix           = prefix,
+            force            = args.force,
         )
 
-    # ── Module 7: Subtelomeric tandem repeats ─────────────────────────────────
+    # ── Module 1: Subtelomeric tandem repeats ─────────────────────────────────
     # Runs right after Module 0, the only module it depends on -- it uses
     # tel_gff to know which scaffold ends already have a confirmed telomere.
-    # Kept separate from Module 4 (Integration)'s merged tel/rRNA/tRNA GFF3;
+    # Kept separate from Module 5 (Integration)'s merged tel/rRNA/tRNA GFF3;
     # not folded in there since that module's existing contract wasn't part
     # of this addition's scope.
-    subtel_gff = results / f"mod07_subtelomeric_{prefix}.gff3"
+    subtel_gff = results / f"mod01_subtelomeric_{prefix}.gff3"
     subtel_counts: dict = {}
-    if not _skip(7, "subtelomeric tandem repeats", subtel_gff):
-        _banner("Module 7 — Subtelomeric Tandem Repeats")
-        subtel_gff, _subtel_tsv, subtel_counts = run_module7_subtelomeric(
+    if not _skip(1, "subtelomeric tandem repeats", subtel_gff):
+        _banner("Module 1 — Subtelomeric Tandem Repeats")
+        subtel_gff, _subtel_tsv, subtel_counts = run_module1_subtelomeric(
             fasta       = args.fasta,
             tel_gff     = tel_gff,
             window_bp   = args.subtelomeric_window_bp,
@@ -2643,21 +2616,21 @@ def main() -> None:
             force       = args.force,
         )
 
-    # ── Module 1: Low-complexity masking ──────────────────────────────────────
+    # ── Module 2: Low-complexity masking ──────────────────────────────────────
     masked_soft = workdir / "masked_soft.fasta"
-    if not _skip(1, "low-complexity masking", masked_soft):
-        _banner("Module 1 — Low-Complexity Masking")
-        run_module1_masking(
+    if not _skip(2, "low-complexity masking", masked_soft):
+        _banner("Module 2 — Low-Complexity Masking")
+        run_module2_masking(
             fasta   = args.fasta,
             workdir = workdir,
             force   = args.force,
         )
 
-    # ── Module 2: rRNA annotation ─────────────────────────────────────────────
-    rrna_gff = results / f"mod02_rRNA_{prefix}.gff3"
-    if not _skip(2, "rRNA annotation", rrna_gff):
-        _banner("Module 2 — rRNA Annotation")
-        rrna_gff = run_module2_rrna(
+    # ── Module 3: rRNA annotation ─────────────────────────────────────────────
+    rrna_gff = results / f"mod03_rRNA_{prefix}.gff3"
+    if not _skip(3, "rRNA annotation", rrna_gff):
+        _banner("Module 3 — rRNA Annotation")
+        rrna_gff = run_module3_rrna(
             fasta            = args.fasta,
             kingdom          = args.kingdom,
             threads          = args.threads,
@@ -2677,11 +2650,11 @@ def main() -> None:
             cap_5s           = args.cap_5s,
         )
 
-    # ── Module 3: tRNA annotation ─────────────────────────────────────────────
-    trna_gff = results / f"mod03_tRNA_{prefix}.gff3"
-    if not _skip(3, "tRNA annotation", trna_gff):
-        _banner("Module 3 — tRNA Annotation")
-        trna_gff = run_module3_trna(
+    # ── Module 4: tRNA annotation ─────────────────────────────────────────────
+    trna_gff = results / f"mod04_tRNA_{prefix}.gff3"
+    if not _skip(4, "tRNA annotation", trna_gff):
+        _banner("Module 4 — tRNA Annotation")
+        trna_gff = run_module4_trna(
             fasta   = args.fasta,
             workdir = workdir,
             results = results,
@@ -2689,21 +2662,21 @@ def main() -> None:
             force   = args.force,
         )
 
-    # ── Module 4: Integration ─────────────────────────────────────────────────
+    # ── Module 5: Integration ─────────────────────────────────────────────────
     counts: dict = {}
-    summary_tsv = results / f"mod04_summary_{prefix}.tsv"
-    if not _skip(4, "integration", summary_tsv):
-        _banner("Module 4 — Integration")
-        _, counts = run_module4_integration(
+    summary_tsv = results / f"mod05_summary_{prefix}.tsv"
+    if not _skip(5, "integration", summary_tsv):
+        _banner("Module 5 — Integration")
+        _, counts = run_module5_integration(
             tel_gff, rrna_gff, trna_gff, results, prefix,
             genome_size=genome_size)
 
-    # ── Module 5: Visualization ───────────────────────────────────────────────
+    # ── Module 6: Visualization ───────────────────────────────────────────────
     plot_formats = [f.strip().lstrip(".") for f in args.format.split(",")]
-    out_plot = results / f"mod05_plot_{prefix}.{plot_formats[0]}"
-    if not _skip(5, "visualization", out_plot):
-        _banner("Module 5 — Visualization")
-        run_module5_plot(
+    out_plot = results / f"mod06_plot_{prefix}.{plot_formats[0]}"
+    if not _skip(6, "visualization", out_plot):
+        _banner("Module 6 — Visualization")
+        run_module6_plot(
             fasta         = args.fasta,
             tel_gff       = tel_gff,
             rrna_gff      = rrna_gff,
@@ -2718,10 +2691,10 @@ def main() -> None:
             force         = args.force,
         )
 
-    # ── Module 6: Evolutionary analysis ───────────────────────────────────────
-    evo_out = results / f"mod06_rrna_scores_{prefix}.tsv"
-    if not _skip(6, "evolutionary analysis", evo_out):
-        run_module6_evolution(
+    # ── Module 7: Evolutionary analysis ───────────────────────────────────────
+    evo_out = results / f"mod07_rrna_scores_{prefix}.tsv"
+    if not _skip(7, "evolutionary analysis", evo_out):
+        run_module7_evolution(
             fasta        = args.fasta,
             rrna_gff     = rrna_gff,
             trna_gff     = trna_gff,
