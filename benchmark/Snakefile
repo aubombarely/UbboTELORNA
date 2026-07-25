@@ -129,9 +129,9 @@ rule run_ubbotelorna_nhmmer:
             --search_tool nhmmer \
             --threads {threads} \
             --disable_co2_tracking \
-            --skip_module 5,6 \
+            --skip_module 1,6,7 \
             > {log} 2>&1
-        cp {params.outdir}/results/mod04_annotation_*.gff3 {output.gff3}
+        cp {params.outdir}/results/mod05_annotation_*.gff3 {output.gff3}
         """
 
 
@@ -158,9 +158,9 @@ rule run_ubbotelorna_cmsearch:
             --search_tool cmsearch \
             --threads {threads} \
             --disable_co2_tracking \
-            --skip_module 5,6 \
+            --skip_module 1,6,7 \
             > {log} 2>&1
-        cp {params.outdir}/results/mod04_annotation_*.gff3 {output.gff3}
+        cp {params.outdir}/results/mod05_annotation_*.gff3 {output.gff3}
         """
 
 
@@ -488,9 +488,9 @@ rule run_ubbotelorna_adversarial:
             --kingdom {params.kingdom} \
             --threads {threads} \
             --disable_co2_tracking \
-            --skip_module 5,6 \
+            --skip_module 1,6,7 \
             > {log} 2>&1
-        cp {params.outdir}/results/mod04_annotation_*.gff3 {output.gff3}
+        cp {params.outdir}/results/mod05_annotation_*.gff3 {output.gff3}
         """
 
 
@@ -546,9 +546,9 @@ rule run_ubbotelorna_fragmented:
             --kingdom {params.kingdom} \
             --threads {threads} \
             --disable_co2_tracking \
-            --skip_module 5,6 \
+            --skip_module 1,6,7 \
             > {log} 2>&1
-        cp {params.outdir}/results/mod04_annotation_*.gff3 {output.gff3}
+        cp {params.outdir}/results/mod05_annotation_*.gff3 {output.gff3}
         """
 
 
@@ -643,7 +643,7 @@ rule perf_ubbotelorna_sweep:
             --kingdom {params.kingdom} \
             --threads {threads} \
             --disable_co2_tracking \
-            --skip_module 5,6 \
+            --skip_module 1,6,7 \
             --force \
             > {log} 2>&1
         """

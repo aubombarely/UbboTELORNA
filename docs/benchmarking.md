@@ -14,16 +14,31 @@ workflow that UbboTELORNA is designed to replace.
 
 | Module | UbboTELORNA | Comparators |
 |---|---|---|
-| 0 — Telomere detection | Custom k-mer scan | tidk, quarTeT |
-| 2 — rRNA annotation | nhmmer + Rfam HMMs (default) | barrnap, RNAmmer, cmsearch + Rfam |
-| 3 — tRNA annotation | ARAGORN | tRNAscan-SE |
-| Full pipeline | UbboTELORNA (Modules 0–4) | barrnap + tRNAscan-SE |
+| 0 — Telomere detection | TRF-based auto-detect + k-mer extent scan | tidk, quarTeT |
+| 1 — Subtelomeric tandem repeats | TRF terminal-window scan + completeness tiering | none (novel) — see note below |
+| 3 — rRNA annotation | nhmmer + Rfam HMMs (default) | barrnap, RNAmmer, cmsearch + Rfam |
+| 4 — tRNA annotation | ARAGORN | tRNAscan-SE |
+| Full pipeline (core) | UbboTELORNA (Modules 0, 2, 3, 4, 5) | barrnap + tRNAscan-SE |
+
+**Module 1 has no established comparator tool** — it's a novel
+completeness-tiering approach (classifying scaffold ends as confirmed
+telomere / subtelomeric support only / neither), not a reimplementation of
+an existing tool's task, unlike Modules 0/3/4 which each replace a
+well-established single-purpose tool. Rather than force an artificial
+correctness comparison against a tool that doesn't do the same thing, its
+own performance (time/memory/emissions) and output statistics (tandem
+repeats found, tier breakdown) are reported directly — see the
+[green computing benchmark](green_computing_benchmarking.md#module-1-subtelomeric-tandem-repeats-marginal-cost)
+for its measured marginal cost. The full-pipeline comparison above
+excludes Module 1 for the same reason: including it without an
+equivalent addition on the comparator side would understate
+UbboTELORNA's advantage without being a fair, like-for-like measurement.
 
 ---
 
 ## Benchmark genome set
 
-Twelve genomes are selected to cover the major branches of life, a range
+Fourteen genomes are selected to cover the major branches of life, a range
 of genome sizes (12 Mb – 3.1 Gb), and assembly qualities from complete
 chromosomal references to highly fragmented polyploid assemblies.
 
@@ -48,7 +63,7 @@ benchmark.
 *S. cerevisiae* harbours ~150 tandem rDNA copies in a single array on
 chromosome XII and 274 nuclear tRNA genes curated to single-copy resolution
 in the Saccharomyces Genome Database (SGD).  This makes it the ideal
-organism for validating Module 6c (tandem array detection) against a known
+organism for validating Module 7c (tandem array detection) against a known
 array structure.
 
 ### Invertebrates
@@ -72,6 +87,7 @@ fragmented or absent rDNA loci.
 | 8 | *Oryza sativa* ssp. japonica IRGSP-1.0 | GCF_001433935.1 | 375 Mb | Diploid | RAP-DB | RefSeq |
 | 9 | *Actinidia arguta* | — | ~700 Mb | 4× polyploid | — | — |
 | 10 | *Zea mays* B73 RefGen_v4 | GCF_000005005.2 | 2.1 Gb | Diploid | MaizeGDB | RefSeq |
+| 11 | *Citrus sinensis* (sweet orange) | GCF_022201045.2 | 360 Mb | Diploid | RefSeq | RefSeq |
 
 *Selaginella* is a lycophyte — an early-diverging land plant outside the
 seed plant lineage.  Its rRNA sequences are more divergent from the Rfam
@@ -85,18 +101,32 @@ maintain sensitivity on distant homologues.
 *Zea mays* (~85% repetitive) is the largest and most repetitive plant
 genome in the set and is used primarily as a performance stress test.
 
+*Citrus sinensis* is a draft-quality, multi-scaffold assembly (`auto`
+telomere repeat — not fixed in config, must be detected) added specifically
+to exercise **Module 1 (Subtelomeric tandem repeats)**: a real genome where
+most scaffold ends lack a fully resolved canonical telomere array but many
+still carry detectable subtelomeric satellite content, the exact scenario
+completeness tiering is designed to surface. On a related private
+working assembly of the same species (not part of this public benchmark,
+used only for development), 61 sequences yielded 11 confirmed telomeres
+(Tier 1) and 61 additional scaffold ends with subtelomeric support only
+(Tier 2) — roughly half the genome's scaffold ends showing *some* evidence
+of terminus proximity despite fewer than 1-in-10 having a fully resolved
+telomere, illustrating why Tier 2 is a meaningfully different signal than
+a simple telomere present/absent call.
+
 ### Vertebrates
 
 | # | Organism | Assembly | Size | Annotations | Source |
 |---|---|---|---|---|---|
-| 11 | *Gallus gallus* GRCg7b | GCF_016699485.2 | 1.0 Gb | Ensembl | RefSeq |
-| 12 | *Danio rerio* GRCz11 | GCF_000002035.6 | 1.4 Gb | ZFIN / Ensembl | RefSeq |
-| 13 | *Homo sapiens* T2T-CHM13v2.0 | GCF_009914755.1 | 3.1 Gb | RefSeq / T2T | RefSeq |
+| 12 | *Gallus gallus* GRCg7b | GCF_016699485.2 | 1.0 Gb | Ensembl | RefSeq |
+| 13 | *Danio rerio* GRCz11 | GCF_000002035.6 | 1.4 Gb | ZFIN / Ensembl | RefSeq |
+| 14 | *Homo sapiens* T2T-CHM13v2.0 | GCF_009914755.1 | 3.1 Gb | RefSeq / T2T | RefSeq |
 
 The human T2T-CHM13 assembly is preferred over GRCh38 because it resolves
 the five acrocentric rDNA arrays (NORs on chromosomes 13, 14, 15, 21, 22)
 that are collapsed or missing in GRCh38.  This makes it directly applicable
-to Module 6c (array detection) and gives a biologically grounded expected
+to Module 7c (array detection) and gives a biologically grounded expected
 copy number.
 
 ---
@@ -157,7 +187,7 @@ low-complexity patterns.  The robustness benchmark tests this directly:
    each chromosome, between native and adversarial assemblies.
 
 Expected result: barrnap misses or fails on sequences with terminal
-repeats; UbboTELORNA (with Module 1 masking) is unaffected.
+repeats; UbboTELORNA (with Module 2 masking) is unaffected.
 
 Additional robustness tests:
 
@@ -182,12 +212,13 @@ genome.  Scaling curves are plotted for:
 | Lineage | Primary contribution |
 |---|---|
 | Prokaryotes | Exact ground truth; `--kingdom bacteria` validation |
-| Fungi | Single-chromosome tandem rDNA array; Module 6c validation |
+| Fungi | Single-chromosome tandem rDNA array; Module 7c validation |
 | Invertebrates | Heterochromatic rDNA (Drosophila); compact well-annotated genomes |
 | Selaginella | Divergent rRNA sequences; sensitivity on non-angiosperm plants |
 | Arabidopsis / rice | Plant gold standards with curated annotations |
 | Actinidia | Polyploid challenge; real validation dataset from tool development |
 | Maize | Large repetitive genome; performance stress test |
+| Citrus | Draft-quality assembly; Module 1 (subtelomeric completeness tiering) validation |
 | Chicken / zebrafish | Mid-size vertebrates with good reference annotations |
 | Human T2T | Resolved rDNA arrays; reviewer-facing reference; largest genome |
 

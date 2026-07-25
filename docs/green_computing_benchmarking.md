@@ -28,19 +28,25 @@ externally observed one (UbboTELORNA's own built-in `codecarbon` support
 is explicitly disabled for this benchmark via `--disable_co2_tracking`,
 for that reason).
 
-UbboTELORNA is run once per genome as the **full pipeline** (Modules 0-4:
-telomere detection, masking, rRNA annotation, tRNA annotation,
-integration), and compared against the **sum** of barrnap + tRNAscan-SE +
+UbboTELORNA's **core pipeline** (Modules 0, 2, 3, 4, 5: telomere
+detection, masking, rRNA annotation, tRNA annotation, integration) is run
+once per genome and compared against the **sum** of barrnap + tRNAscan-SE +
 tidk run separately for the same genome — the same "full pipeline" framing
-already established in the main benchmark ("UbboTELORNA (Modules 0-4)"
-vs. "barrnap + tRNAscan-SE"), extended here to include tidk so the
-telomere-detection cost is counted on both sides.
+established in the main benchmark. Module 1 (Subtelomeric tandem repeats)
+is deliberately excluded from this head-to-head, for the same reason given
+in the [main benchmark doc](benchmarking.md#tools-compared): there's no
+comparator tool on the other side that does the same thing, so including
+it here would understate UbboTELORNA's advantage without being a fair
+measurement. Its own marginal cost is measured and reported separately —
+see [Module 1 marginal cost](#module-1-subtelomeric-tandem-repeats-marginal-cost)
+below.
 
 ## Genomes
 
-Five genomes already used in the main 40-genome benchmark, chosen to span
+Six genomes already used in the main 40-genome benchmark, chosen to span
 ~3 orders of magnitude in size while keeping the whole benchmark fast to
-rerun:
+rerun. `csinensis` was added specifically to exercise Module 1: a real,
+draft-quality plant assembly with `telomere_repeat: "auto"`.
 
 | Genome key | Organism | Size |
 |---|---|---|
@@ -49,18 +55,19 @@ rerun:
 | `celegans` | *Caenorhabditis elegans* WS285 | 100 Mb |
 | `athaliana` | *Arabidopsis thaliana* TAIR10.1 | 135 Mb |
 | `osativa` | *Oryza sativa* ssp. japonica IRGSP-1.0 | 375 Mb |
+| `csinensis` | *Citrus sinensis* (sweet orange) | 360 Mb |
 
 ## Running it
 
 ```bash
 conda activate ubbotelorna_bench
 
-# Download the 5 genomes if not already present (or use the main
+# Download the 6 genomes if not already present (or use the main
 # Snakefile's `download_all` target to fetch the full 40-genome set,
-# which includes these five):
+# which includes these six):
 python3 scripts/download_genomes.py --accession GCF_000005845.2 \
     --outdir results/genomes/ecoli_k12 --genome ecoli_k12
-# ... repeat for scerevisiae, celegans, athaliana, osativa
+# ... repeat for scerevisiae, celegans, athaliana, osativa, csinensis
 
 python3 scripts/green_benchmark.py --outdir results/green/ --threads 8
 ```
@@ -69,15 +76,40 @@ Full script: [`benchmark/scripts/green_benchmark.py`](../benchmark/scripts/green
 
 ## Output
 
-- `results/green/green_benchmark_summary.tsv` — one row per genome × tool:
+- `results/green/green_benchmark_summary.tsv` — one row per genome × tool
+  (now including `ubbotelorna_with_subtelomeric` alongside `ubbotelorna`):
   `genome`, `tool`, `ok`, `elapsed_s`, `emissions_kg_co2eq`, `error`.
 - `results/green/emissions/emissions.csv` — raw `codecarbon` output
   (per-invocation detail: duration, energy, CO2eq, hardware/region info).
-- A per-genome "full pipeline" comparison (UbboTELORNA vs. the summed
-  emissions of barrnap + tRNAscan-SE + tidk) printed to stdout at the end
-  of the run.
+- A per-genome "core pipeline" comparison (UbboTELORNA vs. the summed
+  emissions of barrnap + tRNAscan-SE + tidk), and a separate Module 1
+  marginal-cost table, both printed to stdout at the end of the run.
+
+## Module 1 (Subtelomeric tandem repeats) marginal cost
+
+Reported on its own, not folded into the comparison above, since there is
+no comparator tool measuring the same thing — see
+[Tools compared](benchmarking.md#tools-compared) for why. Computed as
+`(core pipeline + Module 1) - (core pipeline alone)` per genome, both run
+with real `codecarbon` tracking via
+`run_ubbotelorna_with_subtelomeric()`/`run_ubbotelorna()` in
+[`green_benchmark.py`](../benchmark/scripts/green_benchmark.py).
+
+*Not yet run since Module 1 was added (v0.4.0) — no numbers here until the
+benchmark is rerun.*
 
 ## Results
+
+**Stale — needs rerunning.** The table below is from 2026-07-20, before
+several substantive changes: Module 0's auto-detection was rewritten
+around TRF (previously a from-scratch Python k-mer scanner — a completely
+different implementation, not just a faster one), Module 1 (Subtelomeric
+tandem repeats) was added, and modules were renumbered to match execution
+order (what this doc's `--skip_module` logic now needs is `1,6,7`, not the
+old `5,6`; `green_benchmark.py` has already been updated for this, but the
+benchmark itself has not been rerun against the updated pipeline). Treat
+every number below as a historical reference for the *previous* version of
+UbboTELORNA, not a current result.
 
 Run 2026-07-20 on Salvia (`ubbotelorna_bench` env, Python 3.14, 8 threads).
 `codecarbon` fell back to CPU constant-power mode on this hardware (no
@@ -115,6 +147,12 @@ re-testing on a larger genome set (or the full 40) before treating the
 genomes.
 
 ## Extrapolation to production scale (1000 genomes @ ~1 Gb)
+
+**Also stale** — derived entirely from the 2026-07-20 results table above,
+which predates the TRF-based Module 0 rewrite and the addition of Module 1.
+Re-derive after rerunning the benchmark; until then, treat the numbers
+below as illustrative of the *previous* version's advantage, not a current
+estimate.
 
 **This section projects beyond what was actually measured** — the largest
 genome tested above is 375 Mb, and a 1 Gb genome is ~2.7x further out than

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast (5-genome) codecarbon benchmark: UbboTELORNA vs. barrnap +
+"""Fast (6-genome) codecarbon benchmark: UbboTELORNA vs. barrnap +
 tRNAscan-SE + tidk, measuring real emissions per tool rather than just
 wall-clock time.
 
@@ -9,14 +9,23 @@ methodology (UbboTELORNA's own built-in tracker is disabled here via
 --disable_co2_tracking, to avoid mixing self-reported and externally
 observed numbers).
 
-UbboTELORNA is run once per genome as the full pipeline (Modules 0-4:
-telomere + rRNA + tRNA + integration), which is compared against the SUM
-of barrnap + tRNAscan-SE + tidk run separately — the same "full pipeline"
-framing already used in the main benchmark's README ("Full pipeline |
-UbboTELORNA (Modules 0-4) | barrnap + tRNAscan-SE"), extended to include
-tidk for telomeres.
+UbboTELORNA's CORE pipeline (Modules 0, 2, 3, 4, 5 in the current
+numbering: telomere, masking, rRNA, tRNA, integration) is run once per
+genome and compared against the SUM of barrnap + tRNAscan-SE + tidk run
+separately -- the same "full pipeline" framing used in the main
+benchmark's README. Module 1 (Subtelomeric tandem repeats, added
+v0.4.0) and Module 6/7 (Visualization/Evolutionary analysis) are
+excluded from this head-to-head: Module 1 has no equivalent on the
+comparator side (no standalone tool does subtelomeric completeness
+tiering), so including it would shrink UbboTELORNA's apparent
+speed/emissions advantage without a fair addition to the other side of
+the comparison -- not a like-for-like measurement. Instead, Module 1's
+own marginal cost is measured SEPARATELY (core pipeline with vs.
+without Module 1 included) and reported in its own table, since that's
+the honest way to report a capability with no comparator: state its
+real cost plainly, don't fold it into a comparison it was never part of.
 
-Assumes the 5 genomes below are already downloaded (see `download_all` in
+Assumes the 6 genomes below are already downloaded (see `download_all` in
 the main Snakefile, or run `download_genomes.py` directly for just these).
 
 Usage:
@@ -39,10 +48,15 @@ from pathlib import Path
 
 _basedir = Path(__file__).resolve().parent.parent  # benchmark/
 
-# Five genomes spanning ~3 orders of magnitude in size, all already defined
-# in config.yaml (subset of performance_genomes) so results are directly
-# comparable to the existing 40-genome correctness benchmark.
-GENOMES = ["ecoli_k12", "scerevisiae", "athaliana", "celegans", "osativa"]
+# Six genomes spanning ~3 orders of magnitude in size, all already defined
+# in config.yaml (subset of performance_genomes, plus csinensis) so results
+# are directly comparable to the existing 40-genome correctness benchmark.
+# csinensis (Citrus sinensis, GCF_022201045.2) added specifically to
+# exercise Module 1 (Subtelomeric tandem repeats): a real, publicly citable
+# draft-quality plant assembly with `telomere_repeat: "auto"`, the exact
+# scenario Module 1's completeness tiering is designed for.
+GENOMES = ["ecoli_k12", "scerevisiae", "athaliana", "celegans", "osativa",
+          "csinensis"]
 
 
 def _require_tool(name: str) -> str:
@@ -112,28 +126,55 @@ def run_tracked(cmd: list, label: str, genome: str, outdir: Path,
     return row
 
 
-def run_ubbotelorna(config: dict, genome: str, fasta: Path, threads: int,
-                    outdir: Path) -> dict:
+def _ubbotelorna_cmd(config: dict, genome: str, fasta: Path, threads: int,
+                     run_dir: Path, skip_module: str) -> list:
     """UbboTELORNA's own dependencies (tantan, infernal/cmsearch, aragorn,
-    nhmmer) live in its own conda env (`ubbotelorna`), separate from this
-    benchmark's `ubbotelorna_bench` env -- mirrors the main Snakefile's
+    nhmmer, trf) live in its own conda env (`ubbotelorna`), separate from
+    this benchmark's `ubbotelorna_bench` env -- mirrors the main Snakefile's
     `conda: "../envs/UbboTELORNA.yaml"` directive on its UbboTELORNA rules.
     Running it with whatever env happens to be active otherwise fails
-    partway through (Module 1 onward) with no dependency it needs."""
-    run_dir = outdir / "runs" / f"ubbotelorna_{genome}"
+    partway through with a missing dependency."""
     env_name = config.get("ubbotelorna_conda_env", "ubbotelorna")
-    cmd = [
+    return [
         "conda", "run", "-n", env_name, "--no-capture-output",
         "python3", str((_basedir / config["ubbotelorna_script"]).resolve()),
         "--fasta", str(fasta), "--output", str(run_dir),
         "--kingdom", config["genomes"][genome]["kingdom"],
         "--threads", str(threads),
         "--disable_co2_tracking",   # avoid double-tracking; see module docstring
-        "--skip_module", "5,6",     # evolutionary-analysis modules, not part
-                                     # of the core annotation task being compared
+        "--skip_module", skip_module,
         "--force",
     ]
+
+
+def run_ubbotelorna(config: dict, genome: str, fasta: Path, threads: int,
+                    outdir: Path) -> dict:
+    """CORE pipeline only: Modules 0, 2, 3, 4, 5 (telomere, masking, rRNA,
+    tRNA, integration) -- the head-to-head comparison against
+    barrnap+tRNAscan-SE+tidk. Module 1 (subtelomeric, no comparator) and
+    Modules 6/7 (visualization/evolutionary analysis, not part of the core
+    annotation task being compared) are skipped here; see
+    run_ubbotelorna_with_subtelomeric() for Module 1's own cost, measured
+    separately rather than folded into this comparison."""
+    run_dir = outdir / "runs" / f"ubbotelorna_{genome}"
+    cmd = _ubbotelorna_cmd(config, genome, fasta, threads, run_dir,
+                           skip_module="1,6,7")
     return run_tracked(cmd, "ubbotelorna", genome, outdir / "emissions")
+
+
+def run_ubbotelorna_with_subtelomeric(config: dict, genome: str, fasta: Path,
+                                      threads: int, outdir: Path) -> dict:
+    """Same CORE pipeline as run_ubbotelorna(), plus Module 1 (subtelomeric
+    tandem repeats) included. Reported in its own table, not mixed into the
+    vs.-comparator numbers above -- there is no equivalent capability on
+    the barrnap+tRNAscan-SE+tidk side to compare it against, so the honest
+    way to report it is its own real marginal cost, not an artificially
+    shrunk "advantage" over tools that don't do this at all."""
+    run_dir = outdir / "runs" / f"ubbotelorna_subtel_{genome}"
+    cmd = _ubbotelorna_cmd(config, genome, fasta, threads, run_dir,
+                           skip_module="6,7")
+    return run_tracked(cmd, "ubbotelorna_with_subtelomeric", genome,
+                       outdir / "emissions")
 
 
 def run_barrnap(config: dict, genome: str, fasta: Path, threads: int,
@@ -237,6 +278,8 @@ def main(argv=None):
         print(f"\n=== {genome} ({config['genomes'][genome]['organism']}, "
               f"{config['genomes'][genome]['size_mb']} Mb) ===")
         rows.append(run_ubbotelorna(config, genome, fasta, args.threads, args.outdir))
+        rows.append(run_ubbotelorna_with_subtelomeric(config, genome, fasta,
+                                                       args.threads, args.outdir))
         rows.append(run_barrnap(config, genome, fasta, args.threads, args.outdir))
         rows.append(run_trnascan(config, genome, fasta, args.threads, args.outdir))
 
@@ -270,15 +313,32 @@ def main(argv=None):
         writer.writerows(rows)
     print(f"\nWritten: {summary_path}")
 
-    # Quick "full pipeline" comparison: UbboTELORNA vs. barrnap+trnascan+tidk summed
-    print("\n=== Full-pipeline comparison (per genome) ===")
+    # Quick "core pipeline" comparison: UbboTELORNA (Modules 0,2,3,4,5) vs.
+    # barrnap+trnascan+tidk summed. Module 1 (subtelomeric) deliberately
+    # excluded from both sides -- see module docstring.
+    comparator_tools = {"barrnap", "trnascan", "tidk"}
+    print("\n=== Core-pipeline comparison (per genome) ===")
     print(f"{'Genome':14s} {'UbboTELORNA':>14s} {'barrnap+tRNAscan+tidk':>24s} {'Delta':>10s}")
     for genome in args.genomes:
         g_rows = [r for r in rows if r["genome"] == genome and r["ok"]]
         ubbo = sum(r["emissions_kg_co2eq"] or 0 for r in g_rows if r["tool"] == "ubbotelorna")
-        others = sum(r["emissions_kg_co2eq"] or 0 for r in g_rows if r["tool"] != "ubbotelorna")
+        others = sum(r["emissions_kg_co2eq"] or 0 for r in g_rows if r["tool"] in comparator_tools)
         delta = ubbo - others
         print(f"{genome:14s} {ubbo:14.6f} {others:24.6f} {delta:+10.6f}")
+
+    # Module 1 (Subtelomeric tandem repeats) marginal cost, reported
+    # separately since there's no comparator to measure it against: real
+    # cost of the new completeness-tiering capability, stated plainly
+    # rather than folded into (and distorting) the comparison above.
+    print("\n=== Module 1 (Subtelomeric tandem repeats) marginal cost (per genome) ===")
+    print(f"{'Genome':14s} {'Core-only (kg)':>16s} {'Core+Module1 (kg)':>20s} {'Module1 cost (kg)':>20s}")
+    for genome in args.genomes:
+        g_rows = [r for r in rows if r["genome"] == genome and r["ok"]]
+        core = sum(r["emissions_kg_co2eq"] or 0 for r in g_rows if r["tool"] == "ubbotelorna")
+        with_subtel = sum(r["emissions_kg_co2eq"] or 0 for r in g_rows
+                          if r["tool"] == "ubbotelorna_with_subtelomeric")
+        module1_cost = with_subtel - core
+        print(f"{genome:14s} {core:16.6f} {with_subtel:20.6f} {module1_cost:20.6f}")
 
 
 if __name__ == "__main__":
