@@ -25,6 +25,7 @@ tRNA as the most ancient conserved elements of eukaryotic genomes.
 """
 
 import argparse
+import concurrent.futures
 import getpass
 import json
 import os
@@ -57,7 +58,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.6.0"
+VERSION = "v0.6.1"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -819,7 +820,7 @@ def run_module3_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
                      rfam_dir: Path | None, mxsize: float, search_tool: str,
                      workdir: Path, results: Path,
                      prefix: str, force: bool, chunk_size: int = 200,
-                     chunk_max_bp: int = 50_000_000,
+                     chunk_max_bp: int = 50_000_000, chunk_workers: int = 4,
                      flag_5s_arrays: bool = True, min_5s_copies: int = 5,
                      max_5s_gap: int = 5000, cap_5s: int = 0) -> Path:
     """Run nhmmer (default) or cmsearch and write rRNA GFF3."""
@@ -844,14 +845,34 @@ def run_module3_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
     model_file = hmm_file if search_tool == "nhmmer" else cm_file
 
     if chunk_size > 0:
-        # ── Chunked execution: stream genome, run tool per batch ──────────────
+        # ── Chunked execution: stream genome, run tool per batch, IN PARALLEL
+        # across chunks ─────────────────────────────────────────────────────
         # Chunks flush on whichever limit is hit first: sequence count
         # (chunk_size) or cumulative bp (chunk_max_bp). The bp cap matters
         # for chromosome-scale assemblies with few, very large sequences —
         # those would otherwise never reach chunk_size and the whole genome
         # would land in one chunk, defeating the point of chunking.
+        #
+        # Chunks are dispatched to a thread pool rather than run sequentially:
+        # each chunk's nhmmer/cmsearch call is an I/O-bound subprocess.run()
+        # (blocked waiting on an external process, GIL released the whole
+        # time), so a ThreadPoolExecutor parallelises real wall-clock work
+        # without needing multiprocessing. This was a real, measured
+        # bottleneck: on a real benchmark, --threads scaling for chunked
+        # rRNA search plateaued far short of barrnap's near-linear scaling
+        # on the same genomes (e.g. dmelanogaster: only ~1.7x speedup from
+        # 1->32 threads chunked-sequential, vs barrnap's ~12x on the same
+        # hardware) -- because --threads only sped up the search *within*
+        # one chunk, never let chunk N+1 start before chunk N finished. The
+        # --threads budget is now split `threads // chunk_workers` ways per
+        # chunk, trading a bit of per-chunk internal parallelism (which our
+        # own benchmark showed has fast-diminishing returns anyway) for
+        # genuine cross-chunk concurrency instead.
         bp_desc = f", max {chunk_max_bp:,} bp/chunk" if chunk_max_bp > 0 else ""
-        _log(f"  Chunked mode: {chunk_size} sequences per chunk{bp_desc}")
+        threads_per_chunk = max(1, threads // max(1, chunk_workers))
+        _log(f"  Chunked mode: {chunk_size} sequences per chunk{bp_desc}, "
+             f"up to {chunk_workers} chunk(s) processed concurrently "
+             f"({threads_per_chunk} thread(s)/chunk)")
         all_hits:     list = []
         chunk_buf:    list = []
         chunk_idx          = 0
@@ -865,30 +886,38 @@ def run_module3_rrna(fasta: Path, kingdom: str, threads: int, evalue: float,
                 return True
             return False
 
-        for name, seq in _iter_fasta(search_fa):
-            chunk_buf.append((name, seq))
-            chunk_bp   += len(seq)
-            total_seqs += 1
-            if _chunk_full():
-                chunk_idx += 1
-                _log(f"  Processing chunk {chunk_idx} "
-                     f"({len(chunk_buf)} seqs, {chunk_bp:,} bp, "
-                     f"total so far: {total_seqs})")
-                all_hits.extend(
-                    _run_single_chunk(chunk_buf, chunk_idx, tool, search_tool,
-                                      model_file, threads, evalue, mxsize, workdir)
-                )
-                chunk_buf = []
-                chunk_bp  = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, chunk_workers)) as pool:
+            futures: dict = {}
 
-        if chunk_buf:
-            chunk_idx += 1
-            _log(f"  Processing chunk {chunk_idx} "
-                 f"({len(chunk_buf)} seqs, {chunk_bp:,} bp, total: {total_seqs})")
-            all_hits.extend(
-                _run_single_chunk(chunk_buf, chunk_idx, tool, search_tool,
-                                  model_file, threads, evalue, mxsize, workdir)
-            )
+            def _dispatch(buf: list, idx: int, bp: int) -> None:
+                _log(f"  Dispatching chunk {idx} "
+                     f"({len(buf)} seqs, {bp:,} bp, total so far: {total_seqs})")
+                fut = pool.submit(_run_single_chunk, buf, idx, tool, search_tool,
+                                  model_file, threads_per_chunk, evalue, mxsize, workdir)
+                futures[fut] = idx
+
+            for name, seq in _iter_fasta(search_fa):
+                chunk_buf.append((name, seq))
+                chunk_bp   += len(seq)
+                total_seqs += 1
+                if _chunk_full():
+                    chunk_idx += 1
+                    _dispatch(chunk_buf, chunk_idx, chunk_bp)
+                    chunk_buf = []
+                    chunk_bp  = 0
+
+            if chunk_buf:
+                chunk_idx += 1
+                _dispatch(chunk_buf, chunk_idx, chunk_bp)
+
+            for fut in concurrent.futures.as_completed(futures):
+                idx  = futures[fut]
+                hits = fut.result()   # a chunk-level tool failure calls
+                                      # sys.exit(1) inside _run(); SystemExit
+                                      # propagates through .result() and
+                                      # terminates the process normally
+                all_hits.extend(hits)
+                _log(f"  Chunk {idx} complete ({len(hits)} hits)")
 
         _log(f"  Processed {total_seqs} sequences in {chunk_idx} chunk(s)")
         hits = all_hits
@@ -2458,6 +2487,17 @@ def _build_parser() -> argparse.ArgumentParser:
                           "genome would otherwise land in a single chunk; "
                           "this caps peak nhmmer/cmsearch memory on those "
                           "genomes. Set to 0 to disable the bp cap.")
+    gen.add_argument("--chunk_workers", type=int, default=4,
+                     help="Number of chunks to search concurrently in "
+                          "chunked mode (default: 4). --threads is split "
+                          "threads/chunk_workers ways per chunk. Chunked "
+                          "rRNA search previously ran one chunk at a time "
+                          "regardless of --threads, so --threads only sped "
+                          "up the search within a single chunk and wall-clock "
+                          "time barely improved on genomes with many chunks; "
+                          "this trades some per-chunk internal parallelism "
+                          "(fast-diminishing returns in practice) for real "
+                          "cross-chunk concurrency instead.")
     gen.add_argument("--force", action="store_true",
                      help="Rerun all steps even if outputs already exist")
     gen.add_argument("--dry_run", action="store_true",
@@ -2502,6 +2542,8 @@ def main() -> None:
     chunk_desc = args.chunk_size if args.chunk_size > 0 else "disabled"
     if args.chunk_max_bp > 0:
         chunk_desc = f"{chunk_desc} (max {args.chunk_max_bp:,} bp/chunk)"
+    if args.chunk_size > 0:
+        chunk_desc = f"{chunk_desc}, {args.chunk_workers} chunk(s) concurrently"
     _log(f"  Chunk size  : {chunk_desc}")
     _log(f"  Threads     : {args.threads}")
     genome_size = _fasta_total_length(args.fasta)
@@ -2545,7 +2587,8 @@ def main() -> None:
         if 2 not in skip_modules:
             _log("    [2] Low-complexity masking   →  workdir/masked_soft.fasta")
         if 3 not in skip_modules:
-            chunk_desc = (f"chunk_size={args.chunk_size}"
+            chunk_desc = (f"chunk_size={args.chunk_size}, "
+                          f"{args.chunk_workers} chunk(s) concurrently"
                           if args.chunk_size > 0 else "no chunking")
             _log(f"    [3] rRNA annotation ({args.search_tool}, {chunk_desc})"
                  f"  →  results/mod03_rRNA_*.gff3")
@@ -2644,6 +2687,7 @@ def main() -> None:
             force            = args.force,
             chunk_size       = args.chunk_size,
             chunk_max_bp     = args.chunk_max_bp,
+            chunk_workers    = args.chunk_workers,
             flag_5s_arrays   = args.flag_5s_arrays,
             min_5s_copies    = args.s5_array_min_copies,
             max_5s_gap       = args.s5_array_max_gap,

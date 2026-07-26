@@ -1,5 +1,38 @@
 # Changelog — UbboTELORNA
 
+## [v0.6.1] — 2026-07-26
+
+### Fixed
+- **Module 3 (rRNA) chunked search did not scale with `--threads` on
+  large/many-scaffold genomes.** Real benchmark data (40-genome
+  correctness/performance run) showed barrnap scaling near-linearly with
+  threads (e.g. `gallus`: ~20.7x speedup from 1->32 threads) while
+  UbboTELORNA's chunked nhmmer search barely scaled at all on the same
+  genomes (`dmelanogaster`: only ~1.7x speedup 1->32 threads) — at 32
+  threads, barrnap ended up **7-15x faster** than UbboTELORNA on the
+  larger genomes tested (`gallus`, `osativa`, `dmelanogaster`), a reversal
+  of the advantage UbboTELORNA has at low thread counts. Root cause,
+  confirmed by reading the code: chunks were processed in a plain
+  sequential Python loop, each chunk's `nhmmer`/`cmsearch` subprocess call
+  blocking before the next chunk started — `--threads` only sped up the
+  search *within* one chunk, never let chunk N+1 overlap with chunk N.
+  - Fixed by dispatching chunks to a `concurrent.futures.ThreadPoolExecutor`
+    (chunk search is I/O-bound on an external subprocess, so threads
+    parallelise real wall-clock work without needing multiprocessing) —
+    new `--chunk_workers` (default 4) controls how many chunks run
+    concurrently, with `--threads` split `threads // chunk_workers` ways
+    per chunk rather than all handed to one sequential chunk at a time.
+  - Validated (mocked `_run_single_chunk`, no real nhmmer/cmsearch
+    needed): all chunks processed exactly once with correct threads/chunk
+    math, hits correctly aggregated across chunks into the final GFF3,
+    genuine measured concurrency (6 simulated 0.3s chunks completed in
+    ~0.6s with 3 concurrent workers, vs. ~1.8s if run serially), and a
+    simulated chunk failure still correctly propagates as a fatal error
+    (`SystemExit`) to the caller, matching the original fail-fast
+    behaviour. **Not yet validated against the real 40-genome benchmark**
+    — the numbers above motivated the fix but this specific change has
+    not itself been re-benchmarked yet.
+
 ## [v0.6.0] — 2026-07-25
 
 ### Changed
