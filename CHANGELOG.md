@@ -1,5 +1,38 @@
 # Changelog — UbboTELORNA
 
+## [v0.7.0] — 2026-08-18
+
+### Added
+- **`--telomere_min_seq_length`** to guard telomere repeat-unit
+  auto-detection against small-fragment noise on non-chromosome-scale
+  assemblies. Auto-detection (`_select_telomere_candidate_trf`) picks
+  whichever repeat unit is supported by TRF hits at the most *distinct
+  sequences'* termini -- on a whole, fragmented genome assembly with far
+  more small unplaced scaffolds than real chromosomes, most of those
+  scaffold ends are simply assembly breakpoints (frequently inside
+  unrelated repetitive DNA, since assemblers commonly stall there), and
+  a non-telomeric repeat that happens to be common among many such
+  breakpoints can outnumber and mask the true, narrowly-distributed
+  telomere signal from the real chromosomes. Observed on a real genome:
+  running on the full assembly (206 sequences) auto-detected
+  `CCAGGACATGG` and found 0 confirmed telomeres, while running on the
+  same genome's chromosome-scale pseudomolecules only (24 sequences)
+  correctly detected the canonical plant telomere repeat and confirmed
+  telomeres at 81.2% of ends. `--telomere_min_seq_length` restricts
+  which sequences are eligible to vote on the auto-detected motif to
+  those at least as long as the given threshold (default: 0, i.e. no
+  filtering -- opt-in, since no single default works across organisms
+  with very different chromosome sizes, e.g. ~5 Mb+ for most plant/
+  animal genomes vs. ~200 kb+ for *S. cerevisiae*). Has no effect on
+  `--telomere_repeat` (explicit repeat unit) or on the main telomere
+  scan itself -- every sequence, regardless of length, is still scanned
+  and reported once the repeat unit is known. Verified by unit-testing
+  `run_module0_telomeres()` end-to-end (TRF's own binary mocked out)
+  against a synthetic mix of 3 large "chromosome" and 10 small
+  "fragment" sequences: unfiltered, the fragments' bogus motif won the
+  vote exactly as in the real-genome case; with the threshold set above
+  the fragment size, the real telomere motif won correctly.
+
 ## [v0.6.2] — 2026-08-18
 
 ### Fixed

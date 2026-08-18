@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/version-v0.6.2-teal"/>
+<img src="https://img.shields.io/badge/version-v0.7.0-teal"/>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue"/>
 <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey"/>
-<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.6.2-orange"/></a>
+<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.7.0-orange"/></a>
 </p>
 
 ---
@@ -142,6 +142,7 @@ UbboTELORNA.py --fasta FASTA --output DIR [options]
 | `--telomere_window` | 10000 | bp to scan at each contig end |
 | `--telomere_density` | 0.5 | Minimum repeat density (0–1) to call a telomere |
 | `--telomere_min_len` | 100 | Minimum telomere length to report (bp) |
+| `--telomere_min_seq_length` | 0 (off) | Minimum sequence length (bp) to be eligible to vote on the auto-detected repeat unit — set to roughly your organism's minimum chromosome size on fragmented/non-chromosome-scale assemblies to prevent small-scaffold noise from outvoting the real telomere signal (e.g. ~5000000 for most plant/animal genomes, ~200000 for *S. cerevisiae*) |
 
 ### Module 3 — rRNA annotation
 
@@ -438,6 +439,7 @@ Command   : scripts/UbboTELORNA.py --fasta genome.fasta --output annotation_run/
     "telomere_window": 10000,
     "telomere_density": 0.5,
     "telomere_min_len": 100,
+    "telomere_min_seq_length": 0,
     "evalue": 1e-05,
     "search_tool": "nhmmer",
     "threads": 48

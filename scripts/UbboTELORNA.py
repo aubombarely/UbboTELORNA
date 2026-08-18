@@ -58,7 +58,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.6.2"
+VERSION = "v0.7.0"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -459,7 +459,8 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
                           tel_window: int, tel_density: float,
                           tel_min_len: int, tel_detect_window: int,
                           results: Path, workdir: Path,
-                          prefix: str, force: bool) -> tuple[Path, Path, str | None]:
+                          prefix: str, force: bool,
+                          min_seq_length_telo: int = 0) -> tuple[Path, Path, str | None]:
     """Scan contig ends for telomeric repeats; return (gff3_path,
     summary_tsv_path, repeat_unit_used)."""
     out_gff3 = results / f"mod00_telomeres_{prefix}.gff3"
@@ -480,6 +481,21 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
         _log("  Auto-detecting telomere repeat unit (TRF) …")
         detect_fasta = workdir / "telomere_detect_windows.fasta"
         offsets = _write_terminal_windows_fasta(fasta, tel_detect_window, detect_fasta)
+        if min_seq_length_telo > 0:
+            seq_lengths = _fasta_seq_lengths(fasta)
+            n_before = len({name for name, _end, _off in offsets.values()})
+            filtered = {h: v for h, v in offsets.items()
+                       if seq_lengths.get(v[0], 0) >= min_seq_length_telo}
+            n_after = len({name for name, _end, _off in filtered.values()})
+            _log(f"  --telomere_min_seq_length {min_seq_length_telo:,} bp: "
+                f"{n_after}/{n_before} sequences eligible to vote on the "
+                f"auto-detected repeat unit")
+            if n_after == 0:
+                _log("  WARNING: no sequences meet --telomere_min_seq_length; "
+                    "lower the threshold or supply --telomere_repeat "
+                    "explicitly. Falling back to unfiltered auto-detection.")
+            else:
+                offsets = filtered
         dat_path = _run_trf(detect_fasta, workdir)
         trf_hits = _parse_trf_dat(dat_path) if dat_path is not None else {}
         repeat_unit = _select_telomere_candidate_trf(trf_hits, offsets)
@@ -2408,6 +2424,27 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Minimum repeat density to call a telomere (default: 0.5)")
     tel.add_argument("--telomere_min_len", type=int, default=100,
                      help="Minimum telomere length to report (default: 100 bp)")
+    tel.add_argument("--telomere_min_seq_length", type=int, default=0,
+                     help="Minimum sequence length (bp) for a sequence to be "
+                          "eligible to vote on the auto-detected repeat unit "
+                          "(default: 0, i.e. no filtering; only used when "
+                          "--telomere_repeat is not supplied). On a fragmented, "
+                          "non-chromosome-scale assembly, many small scaffold "
+                          "ends are just assembly breakpoints inside unrelated "
+                          "repetitive DNA, not real chromosome termini -- their "
+                          "votes can outnumber and mask the true (but "
+                          "narrowly-distributed) telomere signal, causing "
+                          "auto-detection to converge on a spurious motif. Set "
+                          "this to roughly your organism's minimum expected "
+                          "chromosome size to restrict voting to sequences "
+                          "that could plausibly reach a real telomere -- e.g. "
+                          "~5000000 for most plant/animal genomes, but much "
+                          "lower for organisms with small chromosomes (e.g. "
+                          "~200000 for S. cerevisiae, whose smallest "
+                          "chromosome is ~230 kb). Has no effect on the main "
+                          "telomere scan itself: once the repeat unit is "
+                          "known, every sequence (regardless of length) is "
+                          "still scanned and reported.")
 
     subtel = ap.add_argument_group("Module 1 — Subtelomeric tandem repeats")
     subtel.add_argument("--subtelomeric_window_bp", type=int, default=20_000,
@@ -2639,6 +2676,7 @@ def main() -> None:
             workdir          = workdir,
             prefix           = prefix,
             force            = args.force,
+            min_seq_length_telo = args.telomere_min_seq_length,
         )
 
     # ── Module 1: Subtelomeric tandem repeats ─────────────────────────────────
@@ -2780,6 +2818,7 @@ def main() -> None:
             "telomere_window":  args.telomere_window,
             "telomere_density": args.telomere_density,
             "telomere_min_len": args.telomere_min_len,
+            "telomere_min_seq_length": args.telomere_min_seq_length,
             "evalue":           args.evalue,
             "search_tool":      args.search_tool,
             "threads":          args.threads,
