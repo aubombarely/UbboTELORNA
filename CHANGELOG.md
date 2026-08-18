@@ -1,5 +1,22 @@
 # Changelog — UbboTELORNA
 
+## [v0.7.3] — 2026-08-18
+
+### Added
+- **`best_length_bp` column in `mod01_completeness_*.tsv`**: the exact
+  length (bp) of the best (highest-copy) subtelomeric tandem repeat
+  hit at each scaffold end, computed as `end - start + 1` from TRF's
+  own reported span -- mirroring Module 0's `mod00_summary_*.tsv`,
+  which already has an equivalent `length_bp` column for telomeres.
+  Previously, the exact span was only recoverable by cross-referencing
+  `mod01_subtelomeric_*.gff3` coordinates (columns 4-5); the
+  completeness TSV itself only had `best_period_bp`/`best_copy_number`,
+  from which length can only be approximated (period x copies is not
+  exact, since real tandem arrays commonly have imperfect terminal
+  copies). Verified against a synthetic case with two different
+  spans (1-210bp and 5-62bp), confirming exact length is reported
+  (210 and 58 respectively), not an approximation.
+
 ## [v0.7.2] — 2026-08-18
 
 ### Added
