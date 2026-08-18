@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/version-v0.7.3-teal"/>
+<img src="https://img.shields.io/badge/version-v0.8.0-teal"/>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue"/>
 <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey"/>
-<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.7.3-orange"/></a>
+<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.8.0-orange"/></a>
 </p>
 
 ---
@@ -60,6 +60,13 @@ emissions via `codecarbon`, not just wall-clock time.
 | 5 | Integration | — | `mod05_annotation_{prefix}.gff3`, `mod05_summary_{prefix}.tsv` |
 | 6 | Visualization | matplotlib | `mod06_plot_{prefix}.{pdf\|png\|svg}` |
 | 7 | Evolutionary analysis | cmsearch RF00005 + custom Python | `mod07_rrna_scores_{prefix}.tsv`, `mod07_trna_class_{prefix}.tsv`, `mod07_arrays_{prefix}.tsv`, `mod07_evolution_{prefix}.{pdf\|png\|svg}` |
+| 8 | Centromere detection | TRF (whole-sequence scan) | `mod08_centromere_{prefix}.gff3`, `mod08_centromere_summary_{prefix}.tsv` |
+
+*Note: Module 8 executes right after Module 5 and before Module 6 (not
+after Module 7, despite the number) so its output is available for
+Module 6's plot — the same reason Module 5 itself runs before Module 6.
+Module numbers are stable identifiers for `--skip_module`/output
+filenames, not necessarily execution order.*
 
 ### Rfam models used
 
@@ -152,6 +159,17 @@ UbboTELORNA.py --fasta FASTA --output DIR [options]
 | `--subtelomeric_min_copies` | 3.0 | Minimum tandem copy number (TRF-reported) for a repeat to be reported and counted toward Tier 2 completeness |
 | `--subtelomeric_min_period` | 2 | Minimum repeat period (bp) for a repeat to be reported — excludes period-1 homopolymer runs (e.g. poly-A), which are generic low-complexity sequence rather than a meaningful subtelomeric satellite, and would otherwise be able to out-rank a real satellite repeat for the reported "best" hit since selection is by raw copy count |
 
+### Module 8 — Centromere detection
+
+| Flag | Default | Description |
+|---|---|---|
+| `--centromere_min_period` | 50 | Minimum repeat period (bp) for a candidate centromeric satellite array |
+| `--centromere_max_period` | 200 | Maximum repeat period (bp) for a candidate centromeric satellite array — typical plant centromeric monomers are ~100–200 bp; unlike telomere repeats, centromeric satellites are not conserved across species, so there is no fixed motif to search for, only a plausible period |
+| `--centromere_min_copies` | 20.0 | Minimum tandem copy number (TRF-reported, per hit) — much higher than `--subtelomeric_min_copies`, since centromeric arrays are typically hundreds to thousands of copies |
+| `--centromere_merge_gap_bp` | 10000 | Merge TRF hits within this distance (bp) of each other into one contiguous candidate array |
+| `--centromere_min_array_bp` | 50000 | Minimum total span (bp) of a merged array to be reported as a candidate |
+| `--centromere_min_seq_length` | 0 (off) | Minimum sequence length (bp) to be scanned — this module scans each *full* sequence (unlike Modules 0/1's terminal windows), which is wasted effort on thousands of small unplaced scaffolds; set to roughly your organism's minimum expected chromosome size on fragmented, non-chromosome-scale assemblies |
+
 ### Module 3 — rRNA annotation
 
 | Flag | Default | Description |
@@ -170,7 +188,7 @@ comparison of the two tools.
 | Flag | Default | Description |
 |---|---|---|
 | `--threads` | 4 | CPU threads for the rRNA search tool |
-| `--skip_module` | — | Comma-separated module numbers to skip: `0`=telomere `1`=subtelomeric tandem repeats `2`=masking `3`=rRNA `4`=tRNA `5`=integration `6`=visualization `7`=evolution (e.g. `--skip_module 0,1,2`) |
+| `--skip_module` | — | Comma-separated module numbers to skip: `0`=telomere `1`=subtelomeric tandem repeats `2`=masking `3`=rRNA `4`=tRNA `5`=integration `6`=visualization `7`=evolution `8`=centromere detection (e.g. `--skip_module 0,1,2`) |
 | `--format` | `pdf` | Plot format(s): `pdf`, `png`, `svg` — comma-separated |
 | `--top_sequences` | `50` | Number of sequences shown in the ideogram |
 | `--sort_sequences` | `length` | Ideogram sequence order: `length` (longest first) or `seqid` (natural Chr1/Chr2/… sort) |
@@ -198,6 +216,8 @@ comparison of the two tools.
 │   ├── mod07_trna_class_{prefix}.tsv       tRNA functional/pseudogene classification (Module 7b)
 │   ├── mod07_arrays_{prefix}.tsv           Tandem array table with spacing stats (Module 7c)
 │   ├── mod07_evolution_{prefix}.pdf        Evolutionary analysis figure (Module 7d)
+│   ├── mod08_centromere_{prefix}.gff3      Candidate centromeric/satellite arrays (Module 8)
+│   ├── mod08_centromere_summary_{prefix}.tsv  Primary candidate per sequence (Module 8)
 │   └── {prefix}.run_summary.json           Run metadata and resource usage
 ├── workdir/
 │   ├── masked_soft.fasta                   Soft-masked FASTA (tantan lowercase)

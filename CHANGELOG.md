@@ -1,5 +1,52 @@
 # Changelog — UbboTELORNA
 
+## [v0.8.0] — 2026-08-18
+
+### Added
+- **Module 8: Centromere detection.** Unlike Modules 0/1 (telomere/
+  subtelomeric), which only scan short terminal windows, centromere
+  position is not known a priori and centromeric satellites are not
+  conserved across species (no fixed motif to search for, unlike
+  telomere repeats) -- so this scans each full sequence with TRF for
+  candidate satellite arrays: long, high-copy tandem repeats in the
+  typical plant centromeric monomer period range (default 50-200 bp,
+  configurable via `--centromere_min_period`/`--centromere_max_period`).
+  Overlapping/nearby hits are merged into contiguous "islands"
+  (`--centromere_merge_gap_bp`, default 10000); islands below
+  `--centromere_min_array_bp` (default 50000) are dropped. The single
+  largest remaining island per sequence is flagged as the primary
+  candidate (`centromere_candidate`); other qualifying islands are also
+  reported (`satellite_array_candidate`), since a genome can carry more
+  than one satellite family and the true centromere is not always the
+  single largest array. `--centromere_min_seq_length` (default 0, off)
+  restricts scanning to sequences at least that long, avoiding wasted
+  effort on thousands of small unplaced scaffolds on fragmented
+  assemblies. TRF has no built-in multithreading, so whole-sequence
+  scans are dispatched one per sequence to a thread pool (same
+  rationale as Module 3's chunk parallelisation in v0.6.1) rather than
+  run sequentially -- each parallel TRF invocation gets its own
+  subdirectory so concurrent runs can't race on the `*.dat` glob inside
+  `_run_trf`.
+  Output: `mod08_centromere_{prefix}.gff3` +
+  `mod08_centromere_summary_{prefix}.tsv`.
+- **Centromere track in the Module 6 plot**, as requested directly:
+  the primary candidate per sequence is now shown on the ideogram (new
+  purple `_C_CEN` layer, alongside the existing telomere/rRNA/tRNA
+  tracks) and in the genome-composition donut chart. Kept as a direct
+  GFF3 read in `run_module6_plot` (a new `_parse_gff3_positions_by_type`
+  helper, filtering to just the primary `centromere_candidate` rows so
+  secondary satellite arrays don't clutter the overview) rather than
+  routed through Module 5's combined annotation/summary, so Module 8
+  only needs to execute before Module 6, not disturb Modules 0-7's
+  existing execution order -- it runs right after Module 5 for exactly
+  that reason (the same reason Module 5 itself runs before Module 6).
+  Verified with a full synthetic run: correct merge-island math (nearby
+  hits merged, distant/small ones correctly separated/dropped),
+  correct primary/secondary ranking by span, correct exclusion of
+  sequences below `--centromere_min_seq_length`, and an actual rendered
+  PNG confirming the new ideogram track and donut wedge both appear
+  correctly.
+
 ## [v0.7.3] — 2026-08-18
 
 ### Added

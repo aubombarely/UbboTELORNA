@@ -58,7 +58,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.7.3"
+VERSION = "v0.8.0"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -221,6 +221,28 @@ def _parse_gff3_positions(gff: Path | None) -> dict:
             try:
                 seqn = cols[0]
                 groups.setdefault(seqn, []).append((int(cols[3]), int(cols[4])))
+            except ValueError:
+                continue
+    return groups
+
+
+def _parse_gff3_positions_by_type(gff: Path | None, feature_type: str) -> dict:
+    """Like _parse_gff3_positions, but only keeps rows whose column-3
+    feature type matches feature_type exactly (e.g. to pull just the
+    primary 'centromere_candidate' rows out of a GFF3 that also contains
+    secondary 'satellite_array_candidate' rows)."""
+    groups: dict = {}
+    if gff is None or not gff.exists():
+        return groups
+    with open(gff) as fh:
+        for line in fh:
+            if line.startswith("#") or not line.strip():
+                continue
+            cols = line.split("\t")
+            if len(cols) < 5 or cols[2] != feature_type:
+                continue
+            try:
+                groups.setdefault(cols[0], []).append((int(cols[3]), int(cols[4])))
             except ValueError:
                 continue
     return groups
@@ -1358,6 +1380,7 @@ def run_module5_integration(tel_gff: Path | None, rrna_gff: Path | None,
 # ── Module 6: Visualization ───────────────────────────────────────────────────
 
 _C_TEL   = "#F5A623"   # amber  — telomere
+_C_CEN   = "#9B59B6"   # purple — centromere (candidate)
 _C_RRNA  = "#4C9BE8"   # blue   — rRNA
 _C_TRNA  = "#E8604C"   # red    — tRNA
 _C_OTHER = "#888888"   # grey   — uncharacterised / sequence bar
@@ -1375,23 +1398,27 @@ def _natural_key(s: str) -> list:
 
 
 def _draw_ideogram(ax: plt.Axes, top_seqs: list[tuple[str, int]],
-                   tel_pos: dict, rrna_pos: dict, trna_pos: dict,
+                   tel_pos: dict, rrna_pos: dict, trna_pos: dict, cen_pos: dict,
                    max_len: int, n_seqs: int, seq_lengths: dict,
                    prefix: str, sort_by: str) -> None:
     """Draw genome ideogram panel showing feature positions per sequence."""
     bar_h   = 0.65
     tel_h   = bar_h + 0.30
+    cen_h   = bar_h + 0.30
     min_vis = max_len * 0.002
     tel_min = max_len * 0.005
+    cen_min = max_len * 0.005
 
     n_rrna_total = sum(len(v) for v in rrna_pos.values())
     n_trna_total = sum(len(v) for v in trna_pos.values())
     n_tel_total  = sum(len(v) for v in tel_pos.values())
+    n_cen_total  = sum(len(v) for v in cen_pos.values())
 
     layers = sorted([
         ("rrna", n_rrna_total, _C_RRNA, 0.40, bar_h),
         ("trna", n_trna_total, _C_TRNA, 0.60, bar_h),
         ("tel",  n_tel_total,  _C_TEL,  1.00, tel_h),
+        ("cen",  n_cen_total,  _C_CEN,  1.00, cen_h),
     ], key=lambda x: -x[1])
 
     for i, (name, slen) in enumerate(top_seqs):
@@ -1405,6 +1432,9 @@ def _draw_ideogram(ax: plt.Axes, top_seqs: list[tuple[str, int]],
             elif layer_name == "trna":
                 pos_list = trna_pos.get(name, [])
                 mv = min_vis
+            elif layer_name == "cen":
+                pos_list = cen_pos.get(name, [])
+                mv = cen_min
             else:
                 pos_list = tel_pos.get(name, [])
                 mv = tel_min
@@ -1430,6 +1460,7 @@ def _draw_ideogram(ax: plt.Axes, top_seqs: list[tuple[str, int]],
     ax.tick_params(left=False)
     legend_patches = [
         mpatches.Patch(color=_C_TEL,  label=f"Telomere (n={n_tel_total:,})"),
+        mpatches.Patch(color=_C_CEN,  label=f"Centromere candidate (n={n_cen_total:,})"),
         mpatches.Patch(color=_C_RRNA, alpha=0.40, label=f"rRNA (n={n_rrna_total:,})"),
         mpatches.Patch(color=_C_TRNA, alpha=0.60, label=f"tRNA (n={n_trna_total:,})"),
     ]
@@ -1487,14 +1518,16 @@ def _draw_trna_bars(ax: plt.Axes, summ: dict) -> None:
     ax.spines[["top", "right"]].set_visible(False)
 
 
-def _draw_donut(ax: plt.Axes, summ: dict, genome_size: int) -> None:
+def _draw_donut(ax: plt.Axes, summ: dict, genome_size: int,
+                cen_bp: int = 0) -> None:
     """Draw genome composition donut chart."""
     tel_bp   = summ.get("telomere", {}).get("TOTAL", (0, 0))[1]
     rrna_bp  = summ.get("rRNA",     {}).get("TOTAL", (0, 0))[1]
     trna_bp  = summ.get("tRNA",     {}).get("TOTAL", (0, 0))[1]
-    other_bp = max(0, genome_size - tel_bp - rrna_bp - trna_bp)
+    other_bp = max(0, genome_size - tel_bp - rrna_bp - trna_bp - cen_bp)
     slices = [(v, l, c) for v, l, c in [
         (tel_bp,   "Telomere", _C_TEL),
+        (cen_bp,   "Centromere (candidate)", _C_CEN),
         (rrna_bp,  "rRNA",     _C_RRNA),
         (trna_bp,  "tRNA",     _C_TRNA),
         (other_bp, "Other",    _C_OTHER),
@@ -1522,7 +1555,8 @@ def _draw_donut(ax: plt.Axes, summ: dict, genome_size: int) -> None:
 
 def run_module6_plot(fasta: Path,
                      tel_gff: Path | None, rrna_gff: Path | None,
-                     trna_gff: Path | None, summary_tsv: Path | None,
+                     trna_gff: Path | None, cen_gff: Path | None,
+                     summary_tsv: Path | None,
                      genome_size: int, results: Path, prefix: str,
                      plot_formats: list, top_sequences: int,
                      sort_by: str, force: bool) -> None:
@@ -1536,6 +1570,12 @@ def run_module6_plot(fasta: Path,
     tel_pos     = _parse_gff3_positions(tel_gff)
     rrna_pos    = _parse_gff3_positions(rrna_gff)
     trna_pos    = _parse_gff3_positions(trna_gff)
+    # Only the primary candidate per sequence is shown in the plot (the
+    # GFF3 also carries secondary 'satellite_array_candidate' rows, which
+    # would clutter the overview -- consult mod08_centromere_*.gff3 directly
+    # for those).
+    cen_pos     = _parse_gff3_positions_by_type(cen_gff, "centromere_candidate")
+    cen_bp      = sum(e - s + 1 for positions in cen_pos.values() for s, e in positions)
     summ        = _parse_summary_tsv(summary_tsv)
 
     if sort_by == "seqid":
@@ -1562,11 +1602,11 @@ def run_module6_plot(fasta: Path,
     ax_trna  = fig.add_subplot(gs[1, 1])
     ax_donut = fig.add_subplot(gs[1, 2])
 
-    _draw_ideogram(ax_ideo, top_seqs, tel_pos, rrna_pos, trna_pos,
+    _draw_ideogram(ax_ideo, top_seqs, tel_pos, rrna_pos, trna_pos, cen_pos,
                    max_len, n_seqs, seq_lengths, prefix, sort_by)
     _draw_rrna_bars(ax_rrna, summ)
     _draw_trna_bars(ax_trna, summ)
-    _draw_donut(ax_donut, summ, genome_size)
+    _draw_donut(ax_donut, summ, genome_size, cen_bp)
 
     for fmt in plot_formats:
         out_path = out_base.with_suffix(f".{fmt}")
@@ -2331,6 +2371,194 @@ def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
     return out_gff3, out_tsv, counts
 
 
+# ── Module 8: Centromere detection ─────────────────────────────────────────────
+# Unlike Modules 0/1 (which only scan short terminal windows), centromere
+# position is not known a priori, so this scans each FULL sequence with TRF
+# for candidate satellite arrays -- long, high-copy tandem repeats in the
+# typical plant centromeric monomer period range (default 50-200 bp, close
+# to nucleosome-wrap length; unlike telomere repeats, centromeric satellites
+# are not conserved across species, so there is no fixed motif to search
+# for, only a plausible period/copy-number/array-size profile). TRF has no
+# built-in multithreading, so whole-sequence scans are dispatched one per
+# sequence to a thread pool (I/O-bound subprocess calls, same rationale as
+# Module 3's chunk parallelisation in v0.6.1) rather than run sequentially.
+
+def _run_trf_one_sequence(name: str, seq: str, workdir: Path, idx: int,
+                          min_period: int, max_period: int,
+                          min_copies: float) -> tuple[str, list]:
+    """Write one sequence to its own subdirectory/FASTA and run TRF there,
+    then filter hits by period/copies. Each call gets its own subdirectory
+    (not a shared one) specifically so parallel TRF invocations don't race
+    on `workdir.glob('*.dat')` inside `_run_trf` -- two concurrent runs
+    writing into the same directory could otherwise have one call's glob
+    pick up another call's still-being-written .dat file."""
+    seq_workdir = workdir / f"cen_scan_{idx}"
+    seq_workdir.mkdir(parents=True, exist_ok=True)
+    seq_fasta = seq_workdir / f"{idx}.fasta"
+    seq_fasta.write_text(f">{name}\n{seq}\n")
+    dat_path = _run_trf(seq_fasta, seq_workdir)
+    hits_by_header = _parse_trf_dat(dat_path) if dat_path is not None else {}
+    raw_hits = hits_by_header.get(name, [])
+    filtered = [h for h in raw_hits
+               if min_period <= h["period"] <= max_period
+               and h["copies"] >= min_copies]
+    return name, filtered
+
+
+def _merge_tandem_hits(hits: list, merge_gap_bp: int) -> list:
+    """Merge overlapping/nearby TRF hits (already filtered by period and
+    copy number) into contiguous 'islands'. Hits must all be for a single
+    sequence. Each returned island records its span, total hit count, and
+    the period/motif/copy-number of its highest-copy (dominant) hit."""
+    if not hits:
+        return []
+    hits_sorted = sorted(hits, key=lambda h: h["start"])
+    islands = []
+    cur = {"start": hits_sorted[0]["start"], "end": hits_sorted[0]["end"],
+          "hits": [hits_sorted[0]]}
+    for h in hits_sorted[1:]:
+        if h["start"] <= cur["end"] + merge_gap_bp:
+            cur["end"] = max(cur["end"], h["end"])
+            cur["hits"].append(h)
+        else:
+            islands.append(cur)
+            cur = {"start": h["start"], "end": h["end"], "hits": [h]}
+    islands.append(cur)
+
+    result = []
+    for isl in islands:
+        dominant = max(isl["hits"], key=lambda h: h["copies"])
+        result.append({
+            "start":        isl["start"],
+            "end":          isl["end"],
+            "length_bp":    isl["end"] - isl["start"] + 1,
+            "n_hits":       len(isl["hits"]),
+            "period":       dominant["period"],
+            "consensus":    dominant["consensus"],
+            "total_copies": sum(h["copies"] for h in isl["hits"]),
+        })
+    return result
+
+
+def run_module8_centromere(fasta: Path, results: Path, workdir: Path,
+                           prefix: str, force: bool,
+                           min_period: int, max_period: int,
+                           min_copies: float, merge_gap_bp: int,
+                           min_array_bp: int, min_seq_length: int,
+                           threads: int) -> tuple[Path, Path, dict]:
+    """Genome-wide TRF scan for candidate centromeric satellite arrays, one
+    per sequence. Overlapping/nearby hits are merged into islands; islands
+    below --centromere_min_array_bp are dropped. The single largest
+    remaining island per sequence is flagged as the primary candidate
+    ('centromere_candidate'); any other qualifying islands are also
+    reported ('satellite_array_candidate') -- a genome can carry more than
+    one satellite family, and the true centromere is not always the single
+    largest array. Returns (gff3_path, summary_tsv_path, counts)."""
+    out_gff3 = results / f"mod08_centromere_{prefix}.gff3"
+    out_tsv  = results / f"mod08_centromere_summary_{prefix}.tsv"
+    if _checkpoint(out_gff3, "centromere-scan", force) and out_tsv.exists():
+        return out_gff3, out_tsv, {}
+
+    seq_lengths = _fasta_seq_lengths(fasta)
+    scan_seqs = {n: l for n, l in seq_lengths.items() if l >= min_seq_length}
+    n_skipped = len(seq_lengths) - len(scan_seqs)
+    _log(f"  {len(scan_seqs)}/{len(seq_lengths)} sequence(s) scanned "
+        f"(--centromere_min_seq_length {min_seq_length:,} bp"
+        f"{f', {n_skipped} too short' if n_skipped else ''})")
+
+    all_hits: dict = {}
+    if scan_seqs:
+        max_workers = max(1, min(threads, len(scan_seqs)))
+        _log(f"  Dispatching {len(scan_seqs)} whole-sequence TRF scan(s) "
+            f"across up to {max_workers} worker(s)")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures: dict = {}
+            idx = 0
+            for name, seq in _iter_fasta(fasta):
+                if name not in scan_seqs:
+                    continue
+                idx += 1
+                fut = pool.submit(_run_trf_one_sequence, name, seq, workdir, idx,
+                                  min_period, max_period, min_copies)
+                futures[fut] = name
+            for fut in concurrent.futures.as_completed(futures):
+                name, filtered = fut.result()
+                all_hits[name] = filtered
+                _log(f"    {name}: {len(filtered)} candidate repeat hit(s)")
+
+    records: list = []
+    summary_rows: list = []
+    n_primary = 0
+    for name in sorted(all_hits, key=_natural_key):
+        seq_len = seq_lengths[name]
+        islands = _merge_tandem_hits(all_hits[name], merge_gap_bp)
+        islands = [isl for isl in islands if isl["length_bp"] >= min_array_bp]
+        islands.sort(key=lambda isl: -isl["length_bp"])
+
+        if not islands:
+            summary_rows.append({
+                "seqname": name, "seq_length_bp": seq_len,
+                "n_candidate_arrays": 0, "primary_start": "",
+                "primary_end": "", "primary_length_bp": "",
+                "primary_period_bp": "", "primary_copy_number": "",
+                "primary_motif": "", "primary_pct_of_seq": "",
+            })
+            continue
+
+        primary = islands[0]
+        n_primary += 1
+        for rank, isl in enumerate(islands, start=1):
+            is_primary = (rank == 1)
+            ftype = "centromere_candidate" if is_primary else "satellite_array_candidate"
+            attrs = {
+                "ID":                   f"cen_{name}_{rank}",
+                "Name":                 ftype,
+                "period_size":          isl["period"],
+                "copy_number":          f"{isl['total_copies']:.1f}",
+                "n_hits":               isl["n_hits"],
+                "motif":                isl["consensus"],
+                "is_primary_candidate": "yes" if is_primary else "no",
+            }
+            records.append(_gff3_record(
+                name, "UbboTELORNA", ftype, isl["start"], isl["end"],
+                isl["total_copies"], ".", ".", attrs))
+
+        summary_rows.append({
+            "seqname": name, "seq_length_bp": seq_len,
+            "n_candidate_arrays": len(islands),
+            "primary_start": primary["start"], "primary_end": primary["end"],
+            "primary_length_bp": primary["length_bp"],
+            "primary_period_bp": primary["period"],
+            "primary_copy_number": f"{primary['total_copies']:.1f}",
+            "primary_motif": primary["consensus"],
+            "primary_pct_of_seq": (f"{100 * primary['length_bp'] / seq_len:.3f}"
+                                   if seq_len else ""),
+        })
+
+    records.sort(key=_gff3_sort_key)
+    with open(out_gff3, "w") as fh:
+        fh.write(_GFF3_HEADER)
+        for r in records:
+            fh.write(r + "\n")
+
+    cols = ("seqname", "seq_length_bp", "n_candidate_arrays", "primary_start",
+           "primary_end", "primary_length_bp", "primary_period_bp",
+           "primary_copy_number", "primary_motif", "primary_pct_of_seq")
+    with open(out_tsv, "w") as fh:
+        fh.write("\t".join(cols) + "\n")
+        for row in summary_rows:
+            fh.write("\t".join(str(row[k]) for k in cols) + "\n")
+
+    _log(f"  Candidate centromeric arrays found: {n_primary}/{len(scan_seqs)} "
+        f"sequence(s) had a qualifying array (>= {min_array_bp:,} bp)")
+
+    counts = {
+        "n_sequences_scanned": len(scan_seqs),
+        "n_with_candidate":    n_primary,
+    }
+    return out_gff3, out_tsv, counts
+
+
 # ── Run log and carbon tracker helpers ───────────────────────────────────────
 
 def _open_run_log(logs_dir: Path) -> Path:
@@ -2495,6 +2723,43 @@ def _build_parser() -> argparse.ArgumentParser:
                              "a short period trivially yields a high copy "
                              "count.")
 
+    cen = ap.add_argument_group("Module 8 — Centromere detection")
+    cen.add_argument("--centromere_min_period", type=int, default=50,
+                     help="Minimum repeat period (bp) for a candidate "
+                          "centromeric satellite array (default: 50)")
+    cen.add_argument("--centromere_max_period", type=int, default=200,
+                     help="Maximum repeat period (bp) for a candidate "
+                          "centromeric satellite array (default: 200; "
+                          "typical plant centromeric monomers are ~100-200 "
+                          "bp, close to nucleosome-wrap length -- unlike "
+                          "telomere repeats, centromeric satellites are not "
+                          "conserved across species, so there is no fixed "
+                          "motif to search for, only a plausible period)")
+    cen.add_argument("--centromere_min_copies", type=float, default=20.0,
+                     help="Minimum tandem copy number (TRF-reported, per "
+                          "hit) for a candidate centromeric repeat "
+                          "(default: 20.0 -- much higher than "
+                          "--subtelomeric_min_copies, since centromeric "
+                          "arrays are typically hundreds to thousands of "
+                          "copies)")
+    cen.add_argument("--centromere_merge_gap_bp", type=int, default=10_000,
+                     help="Merge TRF hits within this distance (bp) of "
+                          "each other into one contiguous candidate array "
+                          "(default: 10000)")
+    cen.add_argument("--centromere_min_array_bp", type=int, default=50_000,
+                     help="Minimum total span (bp) of a merged array to be "
+                          "reported as a candidate (default: 50000)")
+    cen.add_argument("--centromere_min_seq_length", type=int, default=0,
+                     help="Minimum sequence length (bp) to be scanned for "
+                          "candidate centromeric arrays (default: 0, i.e. "
+                          "scan everything). Unlike Modules 0/1 (which only "
+                          "scan short terminal windows), this module scans "
+                          "each full sequence, which is wasted effort on "
+                          "thousands of small unplaced scaffolds -- set "
+                          "this to roughly your organism's minimum "
+                          "expected chromosome size on fragmented, "
+                          "non-chromosome-scale assemblies.")
+
     rrna = ap.add_argument_group("Module 3 — rRNA")
     rrna.add_argument("--kingdom", choices=["euka", "bacteria", "archaea"],
                       default="euka",
@@ -2540,7 +2805,7 @@ def _build_parser() -> argparse.ArgumentParser:
                           "(e.g. --skip_module 0,1,2). "
                           "0=telomere  1=subtelomeric tandem repeats  2=masking  "
                           "3=rRNA  4=tRNA  5=integration  6=visualization  "
-                          "7=evolution. "
+                          "7=evolution  8=centromere detection. "
                           "Skipped modules are not rerun, but their outputs "
                           "from previous runs are picked up automatically.")
     gen.add_argument("--format", default="pdf",
@@ -2673,6 +2938,10 @@ def main() -> None:
             _log("    [4] tRNA annotation          →  results/mod04_tRNA_*.gff3")
         if 5 not in skip_modules:
             _log("    [5] Integration              →  results/mod05_annotation_*.gff3")
+        if 8 not in skip_modules:
+            _log("    [8] Centromere detection (runs here, before Module 6, "
+                 "since its plot consumes this output)  →  "
+                 "results/mod08_centromere_*.gff3 + mod08_centromere_summary_*.tsv")
         if 6 not in skip_modules:
             fmt0 = args.format.split(",")[0].strip()
             _log(f"    [6] Visualization ({args.sort_sequences})  →  results/mod06_plot_*.{fmt0}")
@@ -2795,6 +3064,29 @@ def main() -> None:
             tel_gff, rrna_gff, trna_gff, results, prefix,
             genome_size=genome_size)
 
+    # ── Module 8: Centromere detection ────────────────────────────────────────
+    # Numbered 8 (purely additive, no renumbering of existing modules 0-7),
+    # but executed here -- right after Module 5, before Module 6 -- since
+    # Module 6's plot consumes its GFF3 output, the same reason Module 5
+    # itself runs before Module 6.
+    cen_gff = results / f"mod08_centromere_{prefix}.gff3"
+    if not _skip(8, "centromere detection", cen_gff):
+        _banner("Module 8 — Centromere Detection")
+        cen_gff, _cen_tsv, _cen_counts = run_module8_centromere(
+            fasta          = args.fasta,
+            results        = results,
+            workdir        = workdir,
+            prefix         = prefix,
+            force          = args.force,
+            min_period     = args.centromere_min_period,
+            max_period     = args.centromere_max_period,
+            min_copies     = args.centromere_min_copies,
+            merge_gap_bp   = args.centromere_merge_gap_bp,
+            min_array_bp   = args.centromere_min_array_bp,
+            min_seq_length = args.centromere_min_seq_length,
+            threads        = args.threads,
+        )
+
     # ── Module 6: Visualization ───────────────────────────────────────────────
     plot_formats = [f.strip().lstrip(".") for f in args.format.split(",")]
     out_plot = results / f"mod06_plot_{prefix}.{plot_formats[0]}"
@@ -2805,6 +3097,7 @@ def main() -> None:
             tel_gff       = tel_gff,
             rrna_gff      = rrna_gff,
             trna_gff      = trna_gff,
+            cen_gff       = cen_gff,
             summary_tsv   = summary_tsv,
             genome_size   = genome_size,
             results       = results,
