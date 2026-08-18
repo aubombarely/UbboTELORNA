@@ -1,5 +1,35 @@
 # Changelog — UbboTELORNA
 
+## [v0.7.2] — 2026-08-18
+
+### Added
+- **`motif_is_telomeric` column in `mod01_completeness_*.tsv`** (and an
+  `is_telomeric_motif` GFF3 attribute per feature in
+  `mod01_subtelomeric_*.gff3`), distinguishing a genuinely distinct
+  subtelomeric satellite from Module 1 independently rediscovering the
+  telomere array itself. Module 1's `best_motif` is selected purely
+  from its own TRF scan of a wider terminal window, with no awareness
+  of Module 0's telomere call — so on Tier 1 (confirmed-telomere) rows,
+  `best_motif` is very often just a rotation/strand variant of the
+  telomere repeat itself (the telomere array is typically the highest-
+  copy tandem repeat in that window by a wide margin), not a separate
+  finding. More importantly, this was also ambiguous on **Tier 2**
+  rows: `best_motif` matching the telomere repeat family there means
+  something biologically different (a likely degraded/partial telomere
+  that fell just short of Module 0's confirmation threshold) than
+  `best_motif` being an unrelated satellite (a genuine, distinct
+  subtelomeric repeat) -- previously indistinguishable without manually
+  comparing the motif string by eye. Comparison
+  (`_motif_matches_telomere()`) is strand- and rotation-aware (reuses
+  the same rotation-set approach as `_kmer_density()`), since e.g.
+  `GGTTTAG` is a cyclic rotation of `TTTAGGG`, not simply its reverse
+  complement -- a naive `_canonical()` (reverse-complement-only)
+  comparison would have missed that case. Verified against a 3-scaffold
+  synthetic case covering all three outcomes: confirmed telomere
+  (`motif_is_telomeric=yes`), genuine distinct satellite
+  (`=no`), and unconfirmed-but-telomere-family motif (`=yes` despite
+  Tier 2) -- each classified correctly.
+
 ## [v0.7.1] — 2026-08-18
 
 ### Fixed

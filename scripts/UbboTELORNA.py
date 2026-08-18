@@ -58,7 +58,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.7.1"
+VERSION = "v0.7.2"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -2186,11 +2186,26 @@ def _parse_trf_dat(dat_path: Path) -> dict:
     return hits
 
 
+def _motif_matches_telomere(motif: str, telomere_repeat: str | None) -> str:
+    """Compare a TRF consensus motif against the run's telomere repeat unit,
+    accounting for both strand (reverse complement) and register (cyclic
+    rotation) -- e.g. 'GGTTTAG' is a rotation of 'TTTAGGG', not just its
+    reverse complement, so a plain string/'_canonical()' comparison would
+    miss it. Returns 'yes'/'no', or '' if the telomere repeat unit is
+    unknown (e.g. Module 0 auto-detection failed or was skipped)."""
+    if not telomere_repeat or not motif:
+        return ""
+    ku = telomere_repeat.upper()
+    rots = _all_rotations(ku) | _all_rotations(_revcomp(ku))
+    return "yes" if motif.upper() in rots else "no"
+
+
 def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
                              window_bp: int, min_copies: float,
                              results: Path, workdir: Path,
                              prefix: str, force: bool,
-                             min_period: int = 2) -> tuple[Path, Path, dict]:
+                             min_period: int = 2,
+                             telomere_repeat_unit: str | None = None) -> tuple[Path, Path, dict]:
     """Scan terminal windows for subtelomeric tandem repeats (TRF), and
     classify every scaffold end into a telomere-completeness tier.
     Returns (gff3_path, summary_tsv_path, counts)."""
@@ -2260,6 +2275,8 @@ def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
                     "copy_number":  f"{h['copies']:.1f}",
                     "pct_matches":  h["pct_matches"],
                     "motif":        h["consensus"],
+                    "is_telomeric_motif": _motif_matches_telomere(
+                        h["consensus"], telomere_repeat_unit) or "unknown",
                 }
                 records.append(
                     _gff3_record(name, "UbboTELORNA", "subtelomeric_tandem_repeat",
@@ -2275,6 +2292,9 @@ def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
                 "best_period_bp":     best_hit["period"] if best_hit else "",
                 "best_copy_number":   f"{best_hit['copies']:.1f}" if best_hit else "",
                 "best_motif":         best_hit["consensus"] if best_hit else "",
+                "motif_is_telomeric": (_motif_matches_telomere(
+                    best_hit["consensus"], telomere_repeat_unit)
+                    if best_hit else ""),
             })
 
     records.sort(key=_gff3_sort_key)
@@ -2285,12 +2305,13 @@ def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
 
     with open(out_tsv, "w") as fh:
         fh.write("seqname\tend\tseq_length_bp\ttier\tconfirmed_telomere\t"
-                 "best_period_bp\tbest_copy_number\tbest_motif\n")
+                 "best_period_bp\tbest_copy_number\tbest_motif\t"
+                 "motif_is_telomeric\n")
         for row in summary_rows:
             fh.write("\t".join(str(row[k]) for k in
                      ("seqname", "end", "seq_length_bp", "tier",
                       "confirmed_telomere", "best_period_bp", "best_copy_number",
-                      "best_motif")) + "\n")
+                      "best_motif", "motif_is_telomeric")) + "\n")
 
     n_ends = sum(tier_counts.values())
     pct = {t: (100.0 * c / n_ends if n_ends else 0.0) for t, c in tier_counts.items()}
@@ -2713,6 +2734,7 @@ def main() -> None:
             prefix      = prefix,
             force       = args.force,
             min_period  = args.subtelomeric_min_period,
+            telomere_repeat_unit = repeat_used,
         )
 
     # ── Module 2: Low-complexity masking ──────────────────────────────────────
