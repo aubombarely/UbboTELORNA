@@ -1,5 +1,23 @@
 # Changelog — UbboTELORNA
 
+## [v0.6.2] — 2026-08-18
+
+### Fixed
+- **Subtelomeric tandem repeat consensus motif was parsed but never
+  written to any output file.** `_parse_trf_dat()`'s own docstring said
+  the parsed consensus sequence was "used... for Module 1's GFF3
+  attributes", but `run_module1_subtelomeric()` built the GFF3 `attrs`
+  dict and TSV summary rows without it — so the actual repeat motif
+  (e.g. `TTTAGGG`) was unrecoverable from `mod01_subtelomeric_*.gff3`
+  or `mod01_completeness_*.tsv`, only the period length and copy number
+  were reported. Fixed by adding `motif=` to the GFF3 attributes (one
+  per hit) and a `best_motif` column to the completeness TSV (the
+  motif of the highest-copy-number hit at that scaffold end, matching
+  the existing `best_period_bp`/`best_copy_number` fields). Verified
+  by unit-testing `_parse_trf_dat()` and the output-row construction
+  directly against a synthetic TRF `.dat` record, since `trf` itself
+  wasn't available in this environment to run Module 1 end-to-end.
+
 ## [v0.6.1] — 2026-07-26
 
 ### Fixed

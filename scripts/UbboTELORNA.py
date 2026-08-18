@@ -58,7 +58,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.6.1"
+VERSION = "v0.6.2"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -2242,6 +2242,7 @@ def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
                     "period_size":  h["period"],
                     "copy_number":  f"{h['copies']:.1f}",
                     "pct_matches":  h["pct_matches"],
+                    "motif":        h["consensus"],
                 }
                 records.append(
                     _gff3_record(name, "UbboTELORNA", "subtelomeric_tandem_repeat",
@@ -2256,6 +2257,7 @@ def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
                 "confirmed_telomere": "yes" if has_telomere else "no",
                 "best_period_bp":     best_hit["period"] if best_hit else "",
                 "best_copy_number":   f"{best_hit['copies']:.1f}" if best_hit else "",
+                "best_motif":         best_hit["consensus"] if best_hit else "",
             })
 
     records.sort(key=_gff3_sort_key)
@@ -2266,11 +2268,12 @@ def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
 
     with open(out_tsv, "w") as fh:
         fh.write("seqname\tend\tseq_length_bp\ttier\tconfirmed_telomere\t"
-                 "best_period_bp\tbest_copy_number\n")
+                 "best_period_bp\tbest_copy_number\tbest_motif\n")
         for row in summary_rows:
             fh.write("\t".join(str(row[k]) for k in
                      ("seqname", "end", "seq_length_bp", "tier",
-                      "confirmed_telomere", "best_period_bp", "best_copy_number")) + "\n")
+                      "confirmed_telomere", "best_period_bp", "best_copy_number",
+                      "best_motif")) + "\n")
 
     n_ends = sum(tier_counts.values())
     pct = {t: (100.0 * c / n_ends if n_ends else 0.0) for t, c in tier_counts.items()}
