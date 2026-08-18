@@ -1,5 +1,27 @@
 # Changelog — UbboTELORNA
 
+## [v0.7.1] — 2026-08-18
+
+### Fixed
+- **Module 1's "best" subtelomeric tandem repeat could be a meaningless
+  homopolymer run.** `best_hit = max(hits, key=lambda h: h["copies"])`
+  selected purely by raw TRF copy count, with no period filtering —
+  and a period-1 homopolymer (e.g. a 29 bp run of `A`) trivially
+  racks up a high copy count relative to its tiny period, so it could
+  out-rank a real, longer-period satellite repeat present in the same
+  window. Observed directly in a real run's
+  `mod01_completeness_*.tsv`: `best_period_bp=1, best_motif=A` reported
+  as the representative subtelomeric repeat at a scaffold end that also
+  had a real period-5 candidate (`CGAAC`) with a lower (but still
+  well-supported) copy count. Fixed by adding
+  `--subtelomeric_min_period` (default: 2), filtering out period-1
+  homopolymer hits before the max-copy-number selection, alongside the
+  existing `--subtelomeric_min_copies` filter. Verified by reproducing
+  the exact scenario (a period-1/29-copy homopolymer competing against
+  a period-5/11.6-copy real satellite) and confirming the homopolymer
+  is excluded and the real motif is correctly selected once the
+  default filter is applied.
+
 ## [v0.7.0] — 2026-08-18
 
 ### Added

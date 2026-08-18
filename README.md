@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/version-v0.7.0-teal"/>
+<img src="https://img.shields.io/badge/version-v0.7.1-teal"/>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue"/>
 <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey"/>
-<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.7.0-orange"/></a>
+<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.7.1-orange"/></a>
 </p>
 
 ---
@@ -143,6 +143,14 @@ UbboTELORNA.py --fasta FASTA --output DIR [options]
 | `--telomere_density` | 0.5 | Minimum repeat density (0–1) to call a telomere |
 | `--telomere_min_len` | 100 | Minimum telomere length to report (bp) |
 | `--telomere_min_seq_length` | 0 (off) | Minimum sequence length (bp) to be eligible to vote on the auto-detected repeat unit — set to roughly your organism's minimum chromosome size on fragmented/non-chromosome-scale assemblies to prevent small-scaffold noise from outvoting the real telomere signal (e.g. ~5000000 for most plant/animal genomes, ~200000 for *S. cerevisiae*) |
+
+### Module 1 — Subtelomeric tandem repeats
+
+| Flag | Default | Description |
+|---|---|---|
+| `--subtelomeric_window_bp` | 20000 | bp to scan at each scaffold end for subtelomeric tandem repeats via TRF |
+| `--subtelomeric_min_copies` | 3.0 | Minimum tandem copy number (TRF-reported) for a repeat to be reported and counted toward Tier 2 completeness |
+| `--subtelomeric_min_period` | 2 | Minimum repeat period (bp) for a repeat to be reported — excludes period-1 homopolymer runs (e.g. poly-A), which are generic low-complexity sequence rather than a meaningful subtelomeric satellite, and would otherwise be able to out-rank a real satellite repeat for the reported "best" hit since selection is by raw copy count |
 
 ### Module 3 — rRNA annotation
 

@@ -58,7 +58,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.7.0"
+VERSION = "v0.7.1"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -2189,7 +2189,8 @@ def _parse_trf_dat(dat_path: Path) -> dict:
 def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
                              window_bp: int, min_copies: float,
                              results: Path, workdir: Path,
-                             prefix: str, force: bool) -> tuple[Path, Path, dict]:
+                             prefix: str, force: bool,
+                             min_period: int = 2) -> tuple[Path, Path, dict]:
     """Scan terminal windows for subtelomeric tandem repeats (TRF), and
     classify every scaffold end into a telomere-completeness tier.
     Returns (gff3_path, summary_tsv_path, counts)."""
@@ -2237,7 +2238,7 @@ def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
             has_telomere = (name, end_label) in confirmed_ends
 
             hits = [h for h in trf_hits_by_header.get(header, [])
-                   if h["copies"] >= min_copies]
+                   if h["copies"] >= min_copies and h["period"] >= min_period]
             best_hit = max(hits, key=lambda h: h["copies"], default=None)
 
             if has_telomere:
@@ -2457,6 +2458,19 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Minimum tandem copy number (as reported by TRF) "
                              "for a repeat to be reported and counted toward "
                              "Tier 2 completeness (default: 3.0)")
+    subtel.add_argument("--subtelomeric_min_period", type=int, default=2,
+                        help="Minimum repeat period (bp) for a repeat to be "
+                             "reported (default: 2, i.e. excludes period-1 "
+                             "homopolymer runs such as poly-A). TRF reports "
+                             "any periodicity including mononucleotide runs, "
+                             "which are generic low-complexity sequence, not "
+                             "a meaningful subtelomeric satellite signal -- "
+                             "without this filter a long homopolymer run can "
+                             "out-rank a real, longer-period satellite repeat "
+                             "for the reported 'best' hit at that scaffold "
+                             "end, since selection is by raw copy number and "
+                             "a short period trivially yields a high copy "
+                             "count.")
 
     rrna = ap.add_argument_group("Module 3 — rRNA")
     rrna.add_argument("--kingdom", choices=["euka", "bacteria", "archaea"],
@@ -2698,6 +2712,7 @@ def main() -> None:
             workdir     = workdir,
             prefix      = prefix,
             force       = args.force,
+            min_period  = args.subtelomeric_min_period,
         )
 
     # ── Module 2: Low-complexity masking ──────────────────────────────────────
