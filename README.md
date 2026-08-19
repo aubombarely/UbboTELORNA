@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/version-v0.9.3-teal"/>
+<img src="https://img.shields.io/badge/version-v0.10.0-teal"/>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue"/>
 <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey"/>
-<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.9.3-orange"/></a>
+<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.10.0-orange"/></a>
 </p>
 
 ---
@@ -266,12 +266,22 @@ tRNA            TOTAL                3546     265950             0.0380
 tRNA            tRNA-Ala             312      23400              0.0033
 tRNA            tRNA-Gly             289      21675              0.0031
 ...
+centromere      TOTAL                21       9482113            1.3546
 ```
 
 - `total_length_bp` — sum of (end − start + 1) for all features of that subtype
 - `pct_genome` — `total_length_bp / genome_size × 100` (4 decimal places; `NA` if genome size unavailable)
 - rRNA subtypes are written in biological order (5S → 5.8S → SSU → LSU)
 - tRNA subtypes are sorted by count descending, then alphabetically
+- the `centromere` row is appended once Module 6 (Centromere detection) has
+  run — it isn't written by Module 5 itself, since centromere detection
+  runs afterward and depends on Module 5's telomere/subtelomeric output for
+  cross-validation. It counts only the primary `centromere_candidate` per
+  sequence (one at most); secondary `satellite_array_candidate` and
+  `te_cluster_candidate` rows are supporting evidence, not a genome census
+  entry — see `mod06_centromere_summary_{prefix}.tsv` for those. Absent
+  entirely if `--skip_module6` is set and no prior `mod06_centromere_*.gff3`
+  exists.
 
 ---
 

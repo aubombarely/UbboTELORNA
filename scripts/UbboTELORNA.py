@@ -61,7 +61,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.9.3"
+VERSION = "v0.10.0"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -1389,6 +1389,39 @@ def run_module5_integration(tel_gff: Path | None, rrna_gff: Path | None,
         "trna_len_by_type":  dict(trna_len_by_type),
     }
     return combined, counts
+
+
+def _append_centromere_summary(summary_tsv: Path, cen_gff: Path | None,
+                                genome_size: int) -> None:
+    """Append a 'centromere' row to Module 5's summary TSV.
+
+    Centromere detection (Module 6) runs after Integration (Module 5), so
+    its output isn't available when Module 5 first writes the file --
+    this is called separately once Module 6 has produced cen_gff. Counts
+    only the primary 'centromere_candidate' per sequence (one at most),
+    matching Module 7's plot; secondary 'satellite_array_candidate' and
+    'te_cluster_candidate' rows are supporting evidence, not a genome
+    census entry -- see mod06_centromere_summary_*.tsv for those.
+    Idempotent: skipped if a 'centromere' row is already present, so
+    resuming against an existing summary doesn't duplicate it.
+    """
+    if not summary_tsv.exists():
+        return
+    with open(summary_tsv) as fh:
+        if any(line.startswith("centromere\t") for line in fh):
+            _log(f"  [checkpoint] centromere row already present in "
+                f"{summary_tsv.name}, skipping")
+            return
+
+    cen_pos = _parse_gff3_positions_by_type(cen_gff, "centromere_candidate")
+    n_cen   = sum(len(positions) for positions in cen_pos.values())
+    cen_len = sum(e - s + 1 for positions in cen_pos.values() for s, e in positions)
+    pct     = f"{cen_len / genome_size * 100:.4f}" if genome_size > 0 else "NA"
+
+    with open(summary_tsv, "a") as fh:
+        fh.write(f"centromere\tTOTAL\t{n_cen}\t{cen_len}\t{pct}\n")
+    _log(f"  Centromere row appended to {summary_tsv.name} "
+        f"({n_cen} sequence(s), {cen_len:,} bp total)")
 
 
 # ── Module 7: Visualization ───────────────────────────────────────────────────
@@ -2894,8 +2927,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "  3  rRNA annotation          (nhmmer [default] or cmsearch + Rfam profiles)\n"
             "  4  tRNA annotation          (ARAGORN)\n"
             "  5  Integration              (merged GFF3 + summary table)\n"
-            "  6  Visualization            (ideogram, subtype bars, composition donut)\n"
-            "  7  Evolutionary analysis    (rRNA scores, tRNA pseudogenes, tandem arrays)\n"
+            "  6  Centromere detection     (genome-wide TRF scan + optional EarlGrey TE clustering)\n"
+            "  7  Visualization            (ideogram, subtype bars, composition donut)\n"
+            "  8  Evolutionary analysis    (rRNA scores, tRNA pseudogenes, tandem arrays)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -3405,6 +3439,10 @@ def main() -> None:
             te_max_kimura  = args.centromere_te_max_kimura,
             te_min_concentration_pct = args.centromere_te_min_concentration_pct,
         )
+
+    # Module 6 runs after Module 5's summary TSV is written, so its results
+    # weren't available yet for that table -- append them now that they exist.
+    _append_centromere_summary(summary_tsv, cen_gff, genome_size)
 
     # ── Module 7: Visualization ───────────────────────────────────────────────
     plot_formats = [f.strip().lstrip(".") for f in args.format.split(",")]

@@ -1,5 +1,26 @@
 # Changelog — UbboTELORNA
 
+## [v0.10.0] — 2026-08-19
+
+### Added
+- `mod05_summary_{prefix}.tsv` now includes a `centromere` row once Module 6
+  (Centromere detection) has run. Module 6 runs after Module 5 (Integration)
+  writes this file, so its results weren't previously reflected in the
+  genome-wide feature census at all -- a real gap noticed by a user
+  inspecting the summary after their v0.9.2 Phillyrea run. The row counts
+  only the primary `centromere_candidate` per sequence (mirroring what
+  Module 7's plot shows); secondary `satellite_array_candidate` and
+  `te_cluster_candidate` rows remain in `mod06_centromere_summary_*.tsv`
+  only, to avoid double-counting overlapping bp in the genome-wide total.
+  Appending is idempotent -- rerunning against an existing summary with a
+  `centromere` row already present does not duplicate it.
+
+### Fixed
+- The module list in `--help`'s description was stale, omitting Module 6
+  (Centromere detection) entirely and mislabeling Modules 7/8 as 6/7 --
+  left over from before Module 6 was added. Corrected to match the
+  top-of-file docstring and actual execution order.
+
 ## [v0.9.3] — 2026-08-19
 
 ### Added
