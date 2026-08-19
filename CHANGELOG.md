@@ -1,5 +1,27 @@
 # Changelog — UbboTELORNA
 
+## [v0.9.1] — 2026-08-19
+
+### Fixed
+- **`KeyError` crash in Module 6 when `--centromere_te_gff` covers a
+  different sequence set than the scanned FASTA.** Real crash on
+  *Phillyrea angustifolia*: an EarlGrey GFF3 generated against the full
+  assembly (chromosomes + unplaced contigs) was supplied while running
+  Module 6 against a chromosomes-only FASTA subset; an unplaced contig
+  name from the GFF3 (`PhangAGP1UCTG024`) had no entry in `seq_lengths`
+  (built from the scanned FASTA), and indexing into it directly crashed
+  with `KeyError: 'PhangAGP1UCTG024'`. Fixed by filtering EarlGrey hits
+  to sequences actually present in the scanned FASTA before clustering,
+  logging how many GFF3 sequences were skipped for not matching (rather
+  than silently dropping them with no indication). This is a legitimate
+  use case, not user error -- TE annotation is often run once on a full
+  assembly and reused across different downstream sequence subsets.
+  Verified by reproducing the exact crash (a mixed EarlGrey GFF3 with
+  both a real chromosome and an unplaced-contig-style sequence name
+  scanned against a chromosomes-only FASTA) and confirming it no longer
+  errors, correctly processes the matching chromosome's TE cluster, and
+  logs the one skipped sequence.
+
 ## [v0.9.0] — 2026-08-19
 
 ### Fixed

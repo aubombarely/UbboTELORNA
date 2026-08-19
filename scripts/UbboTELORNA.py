@@ -61,7 +61,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.9.0"
+VERSION = "v0.9.1"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -2623,7 +2623,15 @@ def run_module6_centromere(fasta: Path, results: Path, workdir: Path,
 
     te_by_seq: dict = {}
     if te_gff is not None and te_gff.exists():
-        te_hits = _parse_earlgrey_gff(te_gff)
+        te_hits_raw = _parse_earlgrey_gff(te_gff)
+        # The EarlGrey GFF3 may cover a different sequence set than the
+        # FASTA being scanned here (e.g. a whole-genome TE annotation
+        # supplied while running the centromere scan on a chromosomes-only
+        # FASTA subset) -- silently indexing into seq_lengths for a name
+        # it doesn't have would crash, so unmatched sequences are dropped
+        # here, with a count logged, rather than assumed to line up.
+        te_hits = {seqn: v for seqn, v in te_hits_raw.items() if seqn in seq_lengths}
+        n_te_seq_skipped = len(te_hits_raw) - len(te_hits)
         te_family_totals: dict = {}
         for instances in te_hits.values():
             for h in instances:
@@ -2631,7 +2639,8 @@ def run_module6_centromere(fasta: Path, results: Path, workdir: Path,
         _log(f"  EarlGrey TE annotation: {sum(len(v) for v in te_hits.values()):,} "
             f"instance(s) across {len(te_family_totals):,} famil(y/ies) "
             f"(--centromere_te_min_copies {te_min_copies}, "
-            f"--centromere_te_merge_gap_bp {te_merge_gap_bp:,})")
+            f"--centromere_te_merge_gap_bp {te_merge_gap_bp:,})"
+            f"{f' -- {n_te_seq_skipped} GFF3 sequence(s) not in the scanned FASTA, skipped' if n_te_seq_skipped else ''}")
         for seqn, instances in te_hits.items():
             clusters = _merge_te_family_clusters(instances, te_merge_gap_bp)
             clusters = [c for c in clusters if c["n_copies"] >= te_min_copies]
