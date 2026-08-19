@@ -61,7 +61,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.9.2"
+VERSION = "v0.9.3"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -163,6 +163,17 @@ def _checkpoint(path: Path, label: str, force: bool) -> bool:
         _log(f"  [checkpoint] {label} — {path.name} already exists, skipping")
         return True
     return False
+
+
+def _with_format(out_base: Path, fmt: str) -> Path:
+    """Append '.{fmt}' to out_base without touching its existing name.
+
+    Path.with_suffix() replaces whatever follows the *last* dot in the
+    filename -- unsafe here since out_base's name embeds the run prefix,
+    which itself commonly contains dots (e.g. a version string like
+    '..._v0.9.2'), causing it to be silently truncated ('v0.9.2' -> 'v0.9').
+    """
+    return out_base.with_name(f"{out_base.name}.{fmt}")
 
 
 # ── Input validation ──────────────────────────────────────────────────────────
@@ -1563,9 +1574,9 @@ def run_module7_plot(fasta: Path,
                      genome_size: int, results: Path, prefix: str,
                      plot_formats: list, top_sequences: int,
                      sort_by: str, force: bool) -> None:
-    """Generate 3-panel figure: ideogram, subtype bars, composition donut."""
+    """Generate 4-panel figure: ideogram, rRNA bars, tRNA bars, composition donut."""
     out_base  = results / f"mod07_plot_{prefix}"
-    out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
+    out_paths = [_with_format(out_base, fmt) for fmt in plot_formats]
     if _checkpoint(out_paths[0], "visualization", force):
         return
 
@@ -1611,8 +1622,12 @@ def run_module7_plot(fasta: Path,
     _draw_trna_bars(ax_trna, summ)
     _draw_donut(ax_donut, summ, genome_size, cen_bp)
 
+    for label, ax in zip("ABCD", (ax_ideo, ax_rrna, ax_trna, ax_donut)):
+        ax.text(-0.02, 1.05, label, transform=ax.transAxes,
+                fontsize=16, fontweight="bold", va="bottom", ha="right")
+
     for fmt in plot_formats:
-        out_path = out_base.with_suffix(f".{fmt}")
+        out_path = _with_format(out_base, fmt)
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         _log(f"  Plot saved: {out_path.name}")
     plt.close(fig)
@@ -1956,7 +1971,7 @@ def _plot_evolution(rrna_records: list, trna_classified: list,
     fig.suptitle(f"{prefix}  —  evolutionary analysis", fontsize=11, y=1.01)
 
     for fmt in plot_formats:
-        out_path = out_base.with_suffix(f".{fmt}")
+        out_path = _with_format(out_base, fmt)
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         _log(f"  Plot saved: {out_path.name}")
     plt.close(fig)
@@ -2118,7 +2133,7 @@ def run_module8_evolution(fasta: Path,
 
     _banner("Module 8d — Evolution Plots")
     out_base  = results / f"mod08_evolution_{prefix}"
-    out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
+    out_paths = [_with_format(out_base, fmt) for fmt in plot_formats]
     if not _checkpoint(out_paths[0], "evolution plots", force):
         _plot_evolution(rrna_records, trna_classified,
                         rrna_arrays, trna_arrays,

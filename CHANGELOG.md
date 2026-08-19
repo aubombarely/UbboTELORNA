@@ -1,5 +1,28 @@
 # Changelog — UbboTELORNA
 
+## [v0.9.3] — 2026-08-19
+
+### Added
+- Panel labels (A, B, C, D) in the upper-left corner of each subplot in
+  `mod07_plot_{prefix}` (ideogram, rRNA bars, tRNA bars, composition donut)
+  for easier reference in figure legends/manuscripts.
+
+### Fixed
+- **Plot filenames silently truncated the run prefix whenever it contained
+  a dot before the version-like suffix** (e.g. `..._v0.9.2.pdf` was written
+  as `..._v0.9.pdf`). Confirmed on a real run (*Phillyrea angustifolia*,
+  prefix `PhangAGP1Chromosomes.ubbotelorna_v0.9.2`): both
+  `mod07_plot_*` and `mod08_evolution_*` outputs lost the `.2`. Root cause:
+  `out_base.with_suffix(f".{fmt}")` replaces whatever follows the *last*
+  dot in the path's name, and `out_base`'s name embeds the run prefix
+  verbatim, so a prefix ending in something like `v0.9.2` has its own `.2`
+  mistaken for an existing suffix and overwritten. Fixed by adding a
+  `_with_format()` helper that appends the format suffix via
+  `Path.with_name()` instead, and switching all four plot-output call
+  sites (Module 7 and Module 8) to use it. This did not affect any
+  non-plot output file, since those are built via f-string concatenation
+  rather than `.with_suffix()`.
+
 ## [v0.9.2] — 2026-08-19
 
 ### Fixed

@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/version-v0.9.2-teal"/>
+<img src="https://img.shields.io/badge/version-v0.9.3-teal"/>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue"/>
 <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey"/>
-<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.9.2-orange"/></a>
+<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.9.3-orange"/></a>
 </p>
 
 ---
