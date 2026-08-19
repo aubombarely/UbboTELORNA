@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/version-v0.8.0-teal"/>
+<img src="https://img.shields.io/badge/version-v0.9.0-teal"/>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue"/>
 <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey"/>
-<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.8.0-orange"/></a>
+<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.9.0-orange"/></a>
 </p>
 
 ---
@@ -58,15 +58,9 @@ emissions via `codecarbon`, not just wall-clock time.
 | 3 | rRNA annotation | nhmmer (default) or cmsearch + Rfam profiles | `mod03_rRNA_{prefix}.gff3` |
 | 4 | tRNA annotation | ARAGORN | `mod04_tRNA_{prefix}.gff3` |
 | 5 | Integration | — | `mod05_annotation_{prefix}.gff3`, `mod05_summary_{prefix}.tsv` |
-| 6 | Visualization | matplotlib | `mod06_plot_{prefix}.{pdf\|png\|svg}` |
-| 7 | Evolutionary analysis | cmsearch RF00005 + custom Python | `mod07_rrna_scores_{prefix}.tsv`, `mod07_trna_class_{prefix}.tsv`, `mod07_arrays_{prefix}.tsv`, `mod07_evolution_{prefix}.{pdf\|png\|svg}` |
-| 8 | Centromere detection | TRF (whole-sequence scan) | `mod08_centromere_{prefix}.gff3`, `mod08_centromere_summary_{prefix}.tsv` |
-
-*Note: Module 8 executes right after Module 5 and before Module 6 (not
-after Module 7, despite the number) so its output is available for
-Module 6's plot — the same reason Module 5 itself runs before Module 6.
-Module numbers are stable identifiers for `--skip_module`/output
-filenames, not necessarily execution order.*
+| 6 | Centromere detection | TRF (whole-sequence scan) + optional EarlGrey TE clustering | `mod06_centromere_{prefix}.gff3`, `mod06_centromere_summary_{prefix}.tsv` |
+| 7 | Visualization | matplotlib | `mod07_plot_{prefix}.{pdf\|png\|svg}` |
+| 8 | Evolutionary analysis | cmsearch RF00005 + custom Python | `mod08_rrna_scores_{prefix}.tsv`, `mod08_trna_class_{prefix}.tsv`, `mod08_arrays_{prefix}.tsv`, `mod08_evolution_{prefix}.{pdf\|png\|svg}` |
 
 ### Rfam models used
 
@@ -109,7 +103,7 @@ conda activate ubbotelorna
 | `hmmer` (`nhmmer`) | rRNA annotation — default (Module 3) | `conda install -c bioconda hmmer` |
 | `infernal` (`cmsearch`) | rRNA annotation — alternative (Module 3) | `conda install -c bioconda infernal` |
 | `aragorn` | tRNA annotation (Module 4) | `conda install -c bioconda aragorn` |
-| `matplotlib` | Visualization (Module 6) | `conda install -c conda-forge matplotlib` |
+| `matplotlib` | Visualization (Module 7) | `conda install -c conda-forge matplotlib` |
 | `codecarbon` | Carbon footprint tracking (optional) | `conda install -c conda-forge codecarbon` |
 
 ---
@@ -159,7 +153,7 @@ UbboTELORNA.py --fasta FASTA --output DIR [options]
 | `--subtelomeric_min_copies` | 3.0 | Minimum tandem copy number (TRF-reported) for a repeat to be reported and counted toward Tier 2 completeness |
 | `--subtelomeric_min_period` | 2 | Minimum repeat period (bp) for a repeat to be reported — excludes period-1 homopolymer runs (e.g. poly-A), which are generic low-complexity sequence rather than a meaningful subtelomeric satellite, and would otherwise be able to out-rank a real satellite repeat for the reported "best" hit since selection is by raw copy count |
 
-### Module 8 — Centromere detection
+### Module 6 — Centromere detection
 
 | Flag | Default | Description |
 |---|---|---|
@@ -169,6 +163,11 @@ UbboTELORNA.py --fasta FASTA --output DIR [options]
 | `--centromere_merge_gap_bp` | 10000 | Merge TRF hits within this distance (bp) of each other into one contiguous candidate array |
 | `--centromere_min_array_bp` | 50000 | Minimum total span (bp) of a merged array to be reported as a candidate |
 | `--centromere_min_seq_length` | 0 (off) | Minimum sequence length (bp) to be scanned — this module scans each *full* sequence (unlike Modules 0/1's terminal windows), which is wasted effort on thousands of small unplaced scaffolds; set to roughly your organism's minimum expected chromosome size on fragmented, non-chromosome-scale assemblies |
+| `--centromere_end_buffer_bp` | 100000 | A candidate array within this distance (bp) of either sequence end, or overlapping an already-confirmed telomere (Module 0) or subtelomeric repeat (Module 1), is flagged "suspect" and deprioritized for primary-candidate status — large subtelomeric satellite arrays produce the same TRF signature as a real centromere |
+| `--centromere_te_gff` | — (off) | Optional EarlGrey repeat-annotation GFF3. TE instances are grouped by family and clustered per sequence: a family whose copies concentrate tightly in one narrow window is the signature of a retrotransposon-based centromere — common in plant genomes whose centromeres aren't built from tandem satellite DNA at all, which the TRF scan above cannot detect under any parameters. Reported as a cross-validating signal alongside the TRF-based candidate, not a replacement for it |
+| `--centromere_te_min_copies` | 15 | Minimum TE copies of one family within a cluster to qualify |
+| `--centromere_te_merge_gap_bp` | 300000 | Merge same-family TE instances within this distance (bp) into one cluster — more generous than `--centromere_merge_gap_bp`, since retrotransposon insertions are more sparsely/irregularly spaced than a tandem satellite array |
+| `--centromere_te_max_kimura` | 0.0 (off) | Optional upper bound on a TE cluster's mean Kimura80 divergence, to prioritize recently-active (low-divergence) clusters — a classic centromeric-retrotransposon signature. Left off by default so an older but real cluster isn't silently excluded |
 
 ### Module 3 — rRNA annotation
 
@@ -188,7 +187,7 @@ comparison of the two tools.
 | Flag | Default | Description |
 |---|---|---|
 | `--threads` | 4 | CPU threads for the rRNA search tool |
-| `--skip_module` | — | Comma-separated module numbers to skip: `0`=telomere `1`=subtelomeric tandem repeats `2`=masking `3`=rRNA `4`=tRNA `5`=integration `6`=visualization `7`=evolution `8`=centromere detection (e.g. `--skip_module 0,1,2`) |
+| `--skip_module` | — | Comma-separated module numbers to skip: `0`=telomere `1`=subtelomeric tandem repeats `2`=masking `3`=rRNA `4`=tRNA `5`=integration `6`=centromere detection `7`=visualization `8`=evolution (e.g. `--skip_module 0,1,2`) |
 | `--format` | `pdf` | Plot format(s): `pdf`, `png`, `svg` — comma-separated |
 | `--top_sequences` | `50` | Number of sequences shown in the ideogram |
 | `--sort_sequences` | `length` | Ideogram sequence order: `length` (longest first) or `seqid` (natural Chr1/Chr2/… sort) |
@@ -211,13 +210,13 @@ comparison of the two tools.
 │   ├── mod04_tRNA_{prefix}.gff3            tRNA features (Module 4)
 │   ├── mod05_annotation_{prefix}.gff3      Combined GFF3 (Module 5)
 │   ├── mod05_summary_{prefix}.tsv          Detailed feature summary (count, length, % genome)
-│   ├── mod06_plot_{prefix}.pdf             Visualization figure (Module 6; format set by --format)
-│   ├── mod07_rrna_scores_{prefix}.tsv      Per-copy rRNA bit scores (Module 7a)
-│   ├── mod07_trna_class_{prefix}.tsv       tRNA functional/pseudogene classification (Module 7b)
-│   ├── mod07_arrays_{prefix}.tsv           Tandem array table with spacing stats (Module 7c)
-│   ├── mod07_evolution_{prefix}.pdf        Evolutionary analysis figure (Module 7d)
-│   ├── mod08_centromere_{prefix}.gff3      Candidate centromeric/satellite arrays (Module 8)
-│   ├── mod08_centromere_summary_{prefix}.tsv  Primary candidate per sequence (Module 8)
+│   ├── mod06_centromere_{prefix}.gff3      Candidate centromeric/satellite arrays (Module 6)
+│   ├── mod06_centromere_summary_{prefix}.tsv  Primary candidate per sequence (Module 6)
+│   ├── mod07_plot_{prefix}.pdf             Visualization figure (Module 7; format set by --format)
+│   ├── mod08_rrna_scores_{prefix}.tsv      Per-copy rRNA bit scores (Module 8a)
+│   ├── mod08_trna_class_{prefix}.tsv       tRNA functional/pseudogene classification (Module 8b)
+│   ├── mod08_arrays_{prefix}.tsv           Tandem array table with spacing stats (Module 8c)
+│   ├── mod08_evolution_{prefix}.pdf        Evolutionary analysis figure (Module 8d)
 │   └── {prefix}.run_summary.json           Run metadata and resource usage
 ├── workdir/
 │   ├── masked_soft.fasta                   Soft-masked FASTA (tantan lowercase)
@@ -275,10 +274,10 @@ tRNA            tRNA-Gly             289      21675              0.0031
 
 ---
 
-## Visualization (Module 6)
+## Visualization (Module 7)
 
-`results/mod06_plot_{prefix}.pdf` is a three-panel figure generated
-automatically at the end of every run (unless `--skip_module 6` is set).
+`results/mod07_plot_{prefix}.pdf` is a three-panel figure generated
+automatically at the end of every run (unless `--skip_module 7` is set).
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -346,27 +345,27 @@ corner of the ideogram includes the count for each feature type.
 
 ---
 
-## Evolutionary analysis (Module 7)
+## Evolutionary analysis (Module 8)
 
-Module 7 interrogates the existing GFF3 outputs from Modules 3 and 4 to
+Module 8 interrogates the existing GFF3 outputs from Modules 3 and 4 to
 characterise sequence divergence, pseudogene content, and tandem array
 organisation.  It requires no new external annotation tools beyond
 Infernal (already a dependency) and runs in minutes on the outputs of a
 completed pipeline.
 
-### 7a — rRNA bit score distribution
+### 8a — rRNA bit score distribution
 
 Each rRNA copy in `mod03_rRNA_{prefix}.gff3` already carries the bit score
-assigned by nhmmer or cmsearch.  Module 7a aggregates these into
-`mod07_rrna_scores_{prefix}.tsv` and plots per-subtype histograms.  The
+assigned by nhmmer or cmsearch.  Module 8a aggregates these into
+`mod08_rrna_scores_{prefix}.tsv` and plots per-subtype histograms.  The
 bit-score distribution reveals the proportion of high-confidence
 (functional) vs. low-scoring (degenerate / pseudogenic) copies for each
 rRNA class.
 
-### 7b — tRNA pseudogene classification
+### 8b — tRNA pseudogene classification
 
 ARAGORN detects tRNA structural patterns but does not formally classify
-pseudogenes.  Module 7b:
+pseudogenes.  Module 8b:
 
 1. Extracts each tRNA sequence from the genome FASTA using the GFF3
    coordinates (streaming; peak memory = one chromosome).
@@ -378,10 +377,10 @@ pseudogenes.  Module 7b:
    - Unrecognised anticodon (`???` in ARAGORN output)
    - Length outside 50–150 bp
 
-Results are written to `mod07_trna_class_{prefix}.tsv` with per-copy
+Results are written to `mod08_trna_class_{prefix}.tsv` with per-copy
 scores and reasons.
 
-### 7c — Tandem array detection
+### 8c — Tandem array detection
 
 Consecutive features within a distance threshold are clustered into
 arrays:
@@ -391,7 +390,7 @@ arrays:
 | rRNA | 50 kb | 2 |
 | tRNA | 10 kb | 2 |
 
-Each array is summarised in `mod07_arrays_{prefix}.tsv`:
+Each array is summarised in `mod08_arrays_{prefix}.tsv`:
 
 ```
 feature_class  array_id  seqname  array_start  array_end  n_copies
@@ -405,7 +404,7 @@ the array, computed as `min(n_SSU, n_5.8S, n_LSU)` for eukaryotes or
 distribution (median spacing ≈ IGS + gene length) gives an estimate of
 the rDNA repeat unit size.
 
-### 7d — Evolution figure
+### 8d — Evolution figure
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -417,19 +416,19 @@ the rDNA repeat unit size.
 └────────────────────────────┴───────────────┴─────────────┘
 ```
 
-### Running Module 7 on an existing annotation
+### Running Module 8 on an existing annotation
 
 ```bash
 python3 scripts/UbboTELORNA.py \
     --fasta       genome.fasta \
     --output      annotation_run/ \
-    --skip_module 0,1,2,3,4,5,6 \
+    --skip_module 0,1,2,3,4,5,6,7 \
     --format      png,pdf \
     --threads     8
 ```
 
-Modules 0–6 are skipped; their existing GFF3 outputs are picked up
-automatically.  Only Module 7 runs.
+Modules 0–7 are skipped; their existing GFF3 outputs are picked up
+automatically.  Only Module 8 runs.
 
 ---
 
@@ -537,8 +536,8 @@ grep -v "^#" annotation_run/results/mod03_rRNA_*.gff3 \
 
 # 6. View the summary table and figure
 cat annotation_run/results/mod05_summary_*.tsv
-# open annotation_run/results/mod06_plot_*.pdf    # macOS
-# evince annotation_run/results/mod06_plot_*.pdf  # Linux
+# open annotation_run/results/mod07_plot_*.pdf    # macOS
+# evince annotation_run/results/mod07_plot_*.pdf  # Linux
 
 # 7. Resume from checkpoint (if run was interrupted)
 python3 scripts/UbboTELORNA.py \

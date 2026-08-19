@@ -16,8 +16,11 @@ Annotates three classes of ancient, conserved genomic elements:
   Module 3  rRNA annotation          — nhmmer (default) or cmsearch + Rfam profiles
   Module 4  tRNA annotation          — ARAGORN
   Module 5  Integration              — merged GFF3 + summary table
-  Module 6  Visualization            — ideogram, subtype bars, composition donut
-  Module 7  Evolutionary analysis    — rRNA scores, tRNA pseudogenes, tandem arrays
+  Module 6  Centromere detection     — genome-wide TRF scan for candidate satellite
+                                       arrays, cross-validated against Module 0/1 and
+                                       (optionally) EarlGrey TE-family clustering
+  Module 7  Visualization            — ideogram, subtype bars, composition donut
+  Module 8  Evolutionary analysis    — rRNA scores, tRNA pseudogenes, tandem arrays
 
 Named after Ubbo-Sathla (Clark Ashton Smith / H.P. Lovecraft Mythos), the
 primordial source of all terrestrial life — mirroring telomeres, rDNA, and
@@ -58,7 +61,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.8.0"
+VERSION = "v0.9.0"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -1377,7 +1380,7 @@ def run_module5_integration(tel_gff: Path | None, rrna_gff: Path | None,
     return combined, counts
 
 
-# ── Module 6: Visualization ───────────────────────────────────────────────────
+# ── Module 7: Visualization ───────────────────────────────────────────────────
 
 _C_TEL   = "#F5A623"   # amber  — telomere
 _C_CEN   = "#9B59B6"   # purple — centromere (candidate)
@@ -1553,7 +1556,7 @@ def _draw_donut(ax: plt.Axes, summ: dict, genome_size: int,
     ax.set_title("Genome composition")
 
 
-def run_module6_plot(fasta: Path,
+def run_module7_plot(fasta: Path,
                      tel_gff: Path | None, rrna_gff: Path | None,
                      trna_gff: Path | None, cen_gff: Path | None,
                      summary_tsv: Path | None,
@@ -1561,7 +1564,7 @@ def run_module6_plot(fasta: Path,
                      plot_formats: list, top_sequences: int,
                      sort_by: str, force: bool) -> None:
     """Generate 3-panel figure: ideogram, subtype bars, composition donut."""
-    out_base  = results / f"mod06_plot_{prefix}"
+    out_base  = results / f"mod07_plot_{prefix}"
     out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
     if _checkpoint(out_paths[0], "visualization", force):
         return
@@ -1572,7 +1575,7 @@ def run_module6_plot(fasta: Path,
     trna_pos    = _parse_gff3_positions(trna_gff)
     # Only the primary candidate per sequence is shown in the plot (the
     # GFF3 also carries secondary 'satellite_array_candidate' rows, which
-    # would clutter the overview -- consult mod08_centromere_*.gff3 directly
+    # would clutter the overview -- consult mod06_centromere_*.gff3 directly
     # for those).
     cen_pos     = _parse_gff3_positions_by_type(cen_gff, "centromere_candidate")
     cen_bp      = sum(e - s + 1 for positions in cen_pos.values() for s, e in positions)
@@ -1584,7 +1587,7 @@ def run_module6_plot(fasta: Path,
         top_seqs = sorted(seq_lengths.items(), key=lambda x: -x[1])[:top_sequences]
 
     if not top_seqs:
-        _log("  [Module 6] No sequences found — skipping plot")
+        _log("  [Module 7] No sequences found — skipping plot")
         return
 
     max_len = max(slen for _, slen in top_seqs)
@@ -1615,7 +1618,7 @@ def run_module6_plot(fasta: Path,
     plt.close(fig)
 
 
-# ── Module 7: Evolutionary analysis ──────────────────────────────────────────
+# ── Module 8: Evolutionary analysis ──────────────────────────────────────────
 
 _RFAM_TRNA_ACC  = "RF00005"   # universal tRNA covariance model
 _TRNA_CM_SCORE_THRESHOLD = 20.0   # bits — tRNAscan-SE's own pseudogene threshold
@@ -1776,8 +1779,8 @@ def _score_trnas_cmsearch(trna_seqs: dict, cm_path: Path,
                            workdir: Path, threads: int, force: bool) -> dict:
     """Run cmsearch RF00005 against extracted tRNA sequences; return {feat_id: best_bit_score}."""
     cmsearch  = _require_tool("cmsearch")
-    trna_fa   = workdir / "mod07_trna_seqs.fasta"
-    tblout    = workdir / "mod07_trna_cmsearch.tblout"
+    trna_fa   = workdir / "mod08_trna_seqs.fasta"
+    tblout    = workdir / "mod08_trna_cmsearch.tblout"
 
     with open(trna_fa, "w") as fh:
         for feat_id, seq in trna_seqs.items():
@@ -1838,7 +1841,7 @@ def _classify_trnas(records: list, cm_scores: dict) -> list:
     return result
 
 
-# ── Module 7 plots ────────────────────────────────────────────────────────────
+# ── Module 8 plots ────────────────────────────────────────────────────────────
 
 def _plot_evolution(rrna_records: list, trna_classified: list,
                     rrna_arrays: list, trna_arrays: list,
@@ -1959,7 +1962,7 @@ def _plot_evolution(rrna_records: list, trna_classified: list,
     plt.close(fig)
 
 
-# ── Module 7 sub-step helpers ─────────────────────────────────────────────────
+# ── Module 8 sub-step helpers ─────────────────────────────────────────────────
 
 def _run_rrna_score_analysis(rrna_records: list, results: Path,
                               prefix: str, force: bool) -> None:
@@ -1967,7 +1970,7 @@ def _run_rrna_score_analysis(rrna_records: list, results: Path,
     if not rrna_records:
         _log("  No rRNA records found — skipping 7a")
         return
-    rrna_score_tsv = results / f"mod07_rrna_scores_{prefix}.tsv"
+    rrna_score_tsv = results / f"mod08_rrna_scores_{prefix}.tsv"
     if force or not rrna_score_tsv.exists():
         sorted_rrna = sorted(rrna_records,
                              key=lambda r: (_natural_key(r["seqname"]), r["start"]))
@@ -2021,7 +2024,7 @@ def _run_trna_classify_analysis(trna_records: list, fasta: Path,
     for reason, cnt in reason_counts.most_common():
         _log(f"    {reason}: {cnt:,}")
 
-    trna_class_tsv = results / f"mod07_trna_class_{prefix}.tsv"
+    trna_class_tsv = results / f"mod08_trna_class_{prefix}.tsv"
     if force or not trna_class_tsv.exists():
         sorted_trna = sorted(trna_classified,
                              key=lambda t: (_natural_key(t["seqname"]), t["start"]))
@@ -2069,7 +2072,7 @@ def _run_array_analysis(rrna_records: list, trna_records: list,
     else:
         _log("  No tRNA arrays detected")
 
-    arrays_tsv = results / f"mod07_arrays_{prefix}.tsv"
+    arrays_tsv = results / f"mod08_arrays_{prefix}.tsv"
     all_arrays = ([{"feature_class": "rRNA", **a} for a in rrna_arrays] +
                   [{"feature_class": "tRNA", **a} for a in trna_arrays])
     all_arrays.sort(key=lambda a: (_natural_key(a["seqname"]), a["array_start"]))
@@ -2092,29 +2095,29 @@ def _run_array_analysis(rrna_records: list, trna_records: list,
     return rrna_arrays, trna_arrays
 
 
-# ── Module 7 main ─────────────────────────────────────────────────────────────
+# ── Module 8 main ─────────────────────────────────────────────────────────────
 
-def run_module7_evolution(fasta: Path,
+def run_module8_evolution(fasta: Path,
                           rrna_gff: Path, trna_gff: Path,
                           rfam_dir: Path, workdir: Path, results: Path,
                           prefix: str, genome_size: int, threads: int,
                           plot_formats: list, force: bool) -> None:
     """Run evolutionary analysis: rRNA scores, tRNA pseudogene classification, tandem arrays."""
-    _banner("Module 7a — rRNA Score Distribution")
+    _banner("Module 8a — rRNA Score Distribution")
     rrna_records = _parse_gff3_records(rrna_gff)
     _run_rrna_score_analysis(rrna_records, results, prefix, force)
 
-    _banner("Module 7b — tRNA Pseudogene Classification")
+    _banner("Module 8b — tRNA Pseudogene Classification")
     trna_records    = _parse_gff3_records(trna_gff)
     trna_classified = _run_trna_classify_analysis(
         trna_records, fasta, rfam_dir, workdir, results, prefix, threads, force)
 
-    _banner("Module 7c — Tandem Array Detection")
+    _banner("Module 8c — Tandem Array Detection")
     rrna_arrays, trna_arrays = _run_array_analysis(
         rrna_records, trna_records, results, prefix, force)
 
-    _banner("Module 7d — Evolution Plots")
-    out_base  = results / f"mod07_evolution_{prefix}"
+    _banner("Module 8d — Evolution Plots")
+    out_base  = results / f"mod08_evolution_{prefix}"
     out_paths = [out_base.with_suffix(f".{fmt}") for fmt in plot_formats]
     if not _checkpoint(out_paths[0], "evolution plots", force):
         _plot_evolution(rrna_records, trna_classified,
@@ -2371,7 +2374,7 @@ def run_module1_subtelomeric(fasta: Path, tel_gff: Path | None,
     return out_gff3, out_tsv, counts
 
 
-# ── Module 8: Centromere detection ─────────────────────────────────────────────
+# ── Module 6: Centromere detection ─────────────────────────────────────────────
 # Unlike Modules 0/1 (which only scan short terminal windows), centromere
 # position is not known a priori, so this scans each FULL sequence with TRF
 # for candidate satellite arrays -- long, high-copy tandem repeats in the
@@ -2440,22 +2443,146 @@ def _merge_tandem_hits(hits: list, merge_gap_bp: int) -> list:
     return result
 
 
-def run_module8_centromere(fasta: Path, results: Path, workdir: Path,
+def _flag_island_context(isl: dict, seq_len: int, name: str,
+                         tel_pos: dict, tel_available: bool,
+                         subtel_pos: dict, subtel_available: bool,
+                         end_buffer_bp: int) -> dict:
+    """Annotate a candidate island with positional-plausibility flags. A
+    large, high-copy tandem array is not necessarily a centromere -- large
+    subtelomeric satellite arrays produce exactly the same TRF signature.
+    Real case that motivated this (Phillyrea angustifolia chromosome 16,
+    v0.8.0): a 609 kb array running to the literal last base of the
+    chromosome, which Module 1 had already independently flagged as a
+    Tier-2 subtelomeric repeat at that same terminus -- Module 8 had no
+    way to know that and reported it as the primary centromere candidate.
+    `is_suspect` is True if the island sits within end_buffer_bp of either
+    chromosome end, or overlaps an already-confirmed telomere (Module 0)
+    or subtelomeric tandem repeat (Module 1) region for the same
+    sequence; suspect islands are still reported, just deprioritized for
+    primary-candidate selection and clearly flagged."""
+    near_end = (isl["start"] <= end_buffer_bp or
+               isl["end"] >= seq_len - end_buffer_bp)
+
+    def _overlaps(positions):
+        return any(s <= isl["end"] and e >= isl["start"] for s, e in positions)
+
+    overlaps_tel    = _overlaps(tel_pos.get(name, []))    if tel_available    else None
+    overlaps_subtel = _overlaps(subtel_pos.get(name, [])) if subtel_available else None
+    return {
+        "near_chromosome_end":   "yes" if near_end else "no",
+        "overlaps_telomere":     ("yes" if overlaps_tel else "no") if tel_available else "unknown",
+        "overlaps_subtelomeric": ("yes" if overlaps_subtel else "no") if subtel_available else "unknown",
+        "is_suspect":            bool(near_end or overlaps_tel or overlaps_subtel),
+    }
+
+
+def _parse_earlgrey_gff(te_gff: Path) -> dict:
+    """Parse an EarlGrey repeat-annotation GFF3 into
+    {seqname: [{"start","end","family_id","te_class","kimura80"}, ...]}.
+    EarlGrey's own GFF3 is standard 9-column GFF3 (score is a raw
+    alignment score, not 0-1/e-value); the family identity and Kimura80
+    divergence live in column 9 as ID=... and KIMURA80=... attributes."""
+    hits: dict = {}
+    with open(te_gff) as fh:
+        for line in fh:
+            if line.startswith("#") or not line.strip():
+                continue
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 9:
+                continue
+            try:
+                seqn, rclass, start, end = cols[0], cols[2], int(cols[3]), int(cols[4])
+            except ValueError:
+                continue
+            attrs = dict(kv.split("=", 1) for kv in cols[8].strip(";").split(";") if "=" in kv)
+            family_id = attrs.get("ID", "")
+            try:
+                kimura = float(attrs.get("KIMURA80", "nan"))
+            except ValueError:
+                kimura = float("nan")
+            hits.setdefault(seqn, []).append({
+                "start": start, "end": end, "family_id": family_id,
+                "te_class": rclass, "kimura80": kimura,
+            })
+    return hits
+
+
+def _merge_te_family_clusters(instances: list, merge_gap_bp: int) -> list:
+    """Group TE instances by family_id, then merge same-family instances
+    within merge_gap_bp of each other into clusters -- the same 'island'
+    concept as _merge_tandem_hits, but keyed on shared family identity
+    rather than tandem periodicity, since retrotransposon copies of one
+    family are not perfectly contiguous the way a satellite array is.
+    A family whose copies cluster tightly in one narrow window (rather
+    than being scattered across the chromosome) is the classic signature
+    of a retrotransposon-based centromere -- common in plant genomes
+    whose centromeres are not built from simple tandem satellite DNA at
+    all, which a TRF-only scan cannot detect under any parameters."""
+    by_family: dict = {}
+    for h in instances:
+        by_family.setdefault(h["family_id"], []).append(h)
+
+    clusters = []
+    for family_id, fam_hits in by_family.items():
+        fam_sorted = sorted(fam_hits, key=lambda h: h["start"])
+        cur = {"start": fam_sorted[0]["start"], "end": fam_sorted[0]["end"],
+              "hits": [fam_sorted[0]]}
+        for h in fam_sorted[1:]:
+            if h["start"] <= cur["end"] + merge_gap_bp:
+                cur["end"] = max(cur["end"], h["end"])
+                cur["hits"].append(h)
+            else:
+                clusters.append((family_id, cur))
+                cur = {"start": h["start"], "end": h["end"], "hits": [h]}
+        clusters.append((family_id, cur))
+
+    result = []
+    for family_id, cl in clusters:
+        kimuras = [h["kimura80"] for h in cl["hits"] if h["kimura80"] == h["kimura80"]]  # drop NaN
+        result.append({
+            "family_id":     family_id,
+            "te_class":      cl["hits"][0]["te_class"],
+            "start":         cl["start"],
+            "end":           cl["end"],
+            "length_bp":     cl["end"] - cl["start"] + 1,
+            "n_copies":      len(cl["hits"]),
+            "mean_kimura80": (sum(kimuras) / len(kimuras)) if kimuras else None,
+        })
+    return result
+
+
+def run_module6_centromere(fasta: Path, results: Path, workdir: Path,
                            prefix: str, force: bool,
                            min_period: int, max_period: int,
                            min_copies: float, merge_gap_bp: int,
                            min_array_bp: int, min_seq_length: int,
-                           threads: int) -> tuple[Path, Path, dict]:
+                           threads: int,
+                           tel_gff: Path | None = None,
+                           subtel_gff: Path | None = None,
+                           end_buffer_bp: int = 100_000,
+                           te_gff: Path | None = None,
+                           te_min_copies: int = 15,
+                           te_merge_gap_bp: int = 300_000,
+                           te_max_kimura: float = 0.0) -> tuple[Path, Path, dict]:
     """Genome-wide TRF scan for candidate centromeric satellite arrays, one
-    per sequence. Overlapping/nearby hits are merged into islands; islands
-    below --centromere_min_array_bp are dropped. The single largest
-    remaining island per sequence is flagged as the primary candidate
-    ('centromere_candidate'); any other qualifying islands are also
-    reported ('satellite_array_candidate') -- a genome can carry more than
-    one satellite family, and the true centromere is not always the single
-    largest array. Returns (gff3_path, summary_tsv_path, counts)."""
-    out_gff3 = results / f"mod08_centromere_{prefix}.gff3"
-    out_tsv  = results / f"mod08_centromere_summary_{prefix}.tsv"
+    per sequence, cross-validated against two independent signals: (1)
+    Module 0/1's telomere/subtelomeric calls, so a large subtelomeric
+    satellite array isn't mistaken for a centromere just because it's
+    large and high-copy (see _flag_island_context); and (2), optionally,
+    an EarlGrey repeat-annotation GFF3, whose TE family + Kimura80
+    divergence data can reveal a retrotransposon-based centromere that a
+    tandem-repeat-only scan would never find (see _merge_te_family_clusters).
+
+    Overlapping/nearby TRF hits are merged into islands; islands below
+    --centromere_min_array_bp are dropped. Among the survivors, the
+    largest island that is NOT flagged suspect becomes the primary
+    candidate ('centromere_candidate'); other qualifying islands
+    (including suspect ones) are still reported ('satellite_array_candidate')
+    -- a genome can carry more than one satellite family, and everything
+    found is kept visible rather than silently discarded. Returns
+    (gff3_path, summary_tsv_path, counts)."""
+    out_gff3 = results / f"mod06_centromere_{prefix}.gff3"
+    out_tsv  = results / f"mod06_centromere_summary_{prefix}.tsv"
     if _checkpoint(out_gff3, "centromere-scan", force) and out_tsv.exists():
         return out_gff3, out_tsv, {}
 
@@ -2465,6 +2592,14 @@ def run_module8_centromere(fasta: Path, results: Path, workdir: Path,
     _log(f"  {len(scan_seqs)}/{len(seq_lengths)} sequence(s) scanned "
         f"(--centromere_min_seq_length {min_seq_length:,} bp"
         f"{f', {n_skipped} too short' if n_skipped else ''})")
+
+    tel_available    = tel_gff is not None and tel_gff.exists()
+    subtel_available = subtel_gff is not None and subtel_gff.exists()
+    tel_pos    = _parse_gff3_positions(tel_gff)    if tel_available    else {}
+    subtel_pos = _parse_gff3_positions(subtel_gff) if subtel_available else {}
+    _log(f"  Cross-validation: telomere calls {'available' if tel_available else 'NOT available'}, "
+        f"subtelomeric calls {'available' if subtel_available else 'NOT available'} "
+        f"(--centromere_end_buffer_bp {end_buffer_bp:,} bp)")
 
     all_hits: dict = {}
     if scan_seqs:
@@ -2486,54 +2621,125 @@ def run_module8_centromere(fasta: Path, results: Path, workdir: Path,
                 all_hits[name] = filtered
                 _log(f"    {name}: {len(filtered)} candidate repeat hit(s)")
 
+    te_by_seq: dict = {}
+    if te_gff is not None and te_gff.exists():
+        te_hits = _parse_earlgrey_gff(te_gff)
+        te_family_totals: dict = {}
+        for instances in te_hits.values():
+            for h in instances:
+                te_family_totals[h["family_id"]] = te_family_totals.get(h["family_id"], 0) + 1
+        _log(f"  EarlGrey TE annotation: {sum(len(v) for v in te_hits.values()):,} "
+            f"instance(s) across {len(te_family_totals):,} famil(y/ies) "
+            f"(--centromere_te_min_copies {te_min_copies}, "
+            f"--centromere_te_merge_gap_bp {te_merge_gap_bp:,})")
+        for seqn, instances in te_hits.items():
+            clusters = _merge_te_family_clusters(instances, te_merge_gap_bp)
+            clusters = [c for c in clusters if c["n_copies"] >= te_min_copies]
+            if te_max_kimura > 0:
+                clusters = [c for c in clusters
+                           if c["mean_kimura80"] is not None and c["mean_kimura80"] <= te_max_kimura]
+            clusters.sort(key=lambda c: -c["n_copies"])
+            if clusters:
+                best = dict(clusters[0])
+                total = te_family_totals.get(best["family_id"], best["n_copies"])
+                best["concentration_pct"] = 100 * best["n_copies"] / total if total else 0.0
+                te_by_seq[seqn] = best
+
     records: list = []
     summary_rows: list = []
     n_primary = 0
-    for name in sorted(all_hits, key=_natural_key):
+    n_te_cluster = 0
+    for name in sorted(set(all_hits) | set(te_by_seq), key=_natural_key):
         seq_len = seq_lengths[name]
-        islands = _merge_tandem_hits(all_hits[name], merge_gap_bp)
+        islands = _merge_tandem_hits(all_hits.get(name, []), merge_gap_bp)
         islands = [isl for isl in islands if isl["length_bp"] >= min_array_bp]
-        islands.sort(key=lambda isl: -isl["length_bp"])
+        for isl in islands:
+            isl.update(_flag_island_context(
+                isl, seq_len, name, tel_pos, tel_available,
+                subtel_pos, subtel_available, end_buffer_bp))
+        # Non-suspect islands are preferred for primary-candidate status;
+        # a suspect one is only used as a fallback (still clearly flagged)
+        # if nothing cleaner qualifies for this sequence.
+        islands.sort(key=lambda isl: (isl["is_suspect"], -isl["length_bp"]))
 
-        if not islands:
-            summary_rows.append({
-                "seqname": name, "seq_length_bp": seq_len,
-                "n_candidate_arrays": 0, "primary_start": "",
-                "primary_end": "", "primary_length_bp": "",
-                "primary_period_bp": "", "primary_copy_number": "",
-                "primary_motif": "", "primary_pct_of_seq": "",
-            })
-            continue
-
-        primary = islands[0]
-        n_primary += 1
-        for rank, isl in enumerate(islands, start=1):
-            is_primary = (rank == 1)
-            ftype = "centromere_candidate" if is_primary else "satellite_array_candidate"
-            attrs = {
-                "ID":                   f"cen_{name}_{rank}",
-                "Name":                 ftype,
-                "period_size":          isl["period"],
-                "copy_number":          f"{isl['total_copies']:.1f}",
-                "n_hits":               isl["n_hits"],
-                "motif":                isl["consensus"],
-                "is_primary_candidate": "yes" if is_primary else "no",
-            }
-            records.append(_gff3_record(
-                name, "UbboTELORNA", ftype, isl["start"], isl["end"],
-                isl["total_copies"], ".", ".", attrs))
-
-        summary_rows.append({
+        te_cluster = te_by_seq.get(name)
+        row = {
             "seqname": name, "seq_length_bp": seq_len,
-            "n_candidate_arrays": len(islands),
-            "primary_start": primary["start"], "primary_end": primary["end"],
-            "primary_length_bp": primary["length_bp"],
-            "primary_period_bp": primary["period"],
-            "primary_copy_number": f"{primary['total_copies']:.1f}",
-            "primary_motif": primary["consensus"],
-            "primary_pct_of_seq": (f"{100 * primary['length_bp'] / seq_len:.3f}"
-                                   if seq_len else ""),
-        })
+            "n_candidate_arrays": len(islands), "primary_start": "",
+            "primary_end": "", "primary_length_bp": "",
+            "primary_period_bp": "", "primary_copy_number": "",
+            "primary_motif": "", "primary_pct_of_seq": "",
+            "near_chromosome_end": "", "overlaps_telomere": "",
+            "overlaps_subtelomeric": "", "te_family_id": "", "te_class": "",
+            "te_n_copies": "", "te_cluster_start": "", "te_cluster_end": "",
+            "te_mean_kimura80": "", "te_concentration_pct": "",
+            "combined_evidence": "",
+        }
+
+        primary = islands[0] if islands else None
+        if primary is not None:
+            n_primary += 1
+            row.update({
+                "primary_start": primary["start"], "primary_end": primary["end"],
+                "primary_length_bp": primary["length_bp"],
+                "primary_period_bp": primary["period"],
+                "primary_copy_number": f"{primary['total_copies']:.1f}",
+                "primary_motif": primary["consensus"],
+                "primary_pct_of_seq": (f"{100 * primary['length_bp'] / seq_len:.3f}"
+                                       if seq_len else ""),
+                "near_chromosome_end": primary["near_chromosome_end"],
+                "overlaps_telomere": primary["overlaps_telomere"],
+                "overlaps_subtelomeric": primary["overlaps_subtelomeric"],
+            })
+            for rank, isl in enumerate(islands, start=1):
+                is_primary = (isl is primary)
+                ftype = "centromere_candidate" if is_primary else "satellite_array_candidate"
+                attrs = {
+                    "ID":                     f"cen_{name}_{rank}",
+                    "Name":                   ftype,
+                    "period_size":            isl["period"],
+                    "copy_number":            f"{isl['total_copies']:.1f}",
+                    "n_hits":                 isl["n_hits"],
+                    "motif":                  isl["consensus"],
+                    "is_primary_candidate":   "yes" if is_primary else "no",
+                    "is_suspect":             "yes" if isl["is_suspect"] else "no",
+                    "near_chromosome_end":    isl["near_chromosome_end"],
+                    "overlaps_telomere":      isl["overlaps_telomere"],
+                    "overlaps_subtelomeric":  isl["overlaps_subtelomeric"],
+                }
+                records.append(_gff3_record(
+                    name, "UbboTELORNA", ftype, isl["start"], isl["end"],
+                    isl["total_copies"], ".", ".", attrs))
+
+        if te_cluster is not None:
+            n_te_cluster += 1
+            row.update({
+                "te_family_id": te_cluster["family_id"],
+                "te_class": te_cluster["te_class"],
+                "te_n_copies": te_cluster["n_copies"],
+                "te_cluster_start": te_cluster["start"],
+                "te_cluster_end": te_cluster["end"],
+                "te_mean_kimura80": (f"{te_cluster['mean_kimura80']:.4f}"
+                                    if te_cluster["mean_kimura80"] is not None else ""),
+                "te_concentration_pct": f"{te_cluster['concentration_pct']:.1f}",
+            })
+            records.append(_gff3_record(
+                name, "UbboTELORNA", "te_cluster_candidate",
+                te_cluster["start"], te_cluster["end"], te_cluster["n_copies"],
+                ".", ".", {
+                    "ID": f"te_cen_{name}", "Name": "te_cluster_candidate",
+                    "family_id": te_cluster["family_id"],
+                    "te_class": te_cluster["te_class"],
+                    "n_copies": te_cluster["n_copies"],
+                    "mean_kimura80": row["te_mean_kimura80"],
+                    "concentration_pct": row["te_concentration_pct"],
+                }))
+            if primary is not None:
+                overlap = (te_cluster["start"] <= primary["end"] and
+                          te_cluster["end"] >= primary["start"])
+                row["combined_evidence"] = "yes" if overlap else "no"
+
+        summary_rows.append(row)
 
     records.sort(key=_gff3_sort_key)
     with open(out_gff3, "w") as fh:
@@ -2543,18 +2749,25 @@ def run_module8_centromere(fasta: Path, results: Path, workdir: Path,
 
     cols = ("seqname", "seq_length_bp", "n_candidate_arrays", "primary_start",
            "primary_end", "primary_length_bp", "primary_period_bp",
-           "primary_copy_number", "primary_motif", "primary_pct_of_seq")
+           "primary_copy_number", "primary_motif", "primary_pct_of_seq",
+           "near_chromosome_end", "overlaps_telomere", "overlaps_subtelomeric",
+           "te_family_id", "te_class", "te_n_copies", "te_cluster_start",
+           "te_cluster_end", "te_mean_kimura80", "te_concentration_pct",
+           "combined_evidence")
     with open(out_tsv, "w") as fh:
         fh.write("\t".join(cols) + "\n")
         for row in summary_rows:
             fh.write("\t".join(str(row[k]) for k in cols) + "\n")
 
-    _log(f"  Candidate centromeric arrays found: {n_primary}/{len(scan_seqs)} "
+    _log(f"  Candidate centromeric arrays (TRF): {n_primary}/{len(scan_seqs)} "
         f"sequence(s) had a qualifying array (>= {min_array_bp:,} bp)")
+    if te_gff is not None:
+        _log(f"  Candidate TE-family clusters: {n_te_cluster} sequence(s)")
 
     counts = {
         "n_sequences_scanned": len(scan_seqs),
         "n_with_candidate":    n_primary,
+        "n_with_te_cluster":   n_te_cluster,
     }
     return out_gff3, out_tsv, counts
 
@@ -2723,7 +2936,7 @@ def _build_parser() -> argparse.ArgumentParser:
                              "a short period trivially yields a high copy "
                              "count.")
 
-    cen = ap.add_argument_group("Module 8 — Centromere detection")
+    cen = ap.add_argument_group("Module 6 — Centromere detection")
     cen.add_argument("--centromere_min_period", type=int, default=50,
                      help="Minimum repeat period (bp) for a candidate "
                           "centromeric satellite array (default: 50)")
@@ -2759,6 +2972,52 @@ def _build_parser() -> argparse.ArgumentParser:
                           "this to roughly your organism's minimum "
                           "expected chromosome size on fragmented, "
                           "non-chromosome-scale assemblies.")
+    cen.add_argument("--centromere_end_buffer_bp", type=int, default=100_000,
+                     help="A candidate array within this distance (bp) of "
+                          "either sequence end, or overlapping an already-"
+                          "confirmed telomere (Module 0) or subtelomeric "
+                          "repeat (Module 1), is flagged 'suspect' and "
+                          "deprioritized for primary-candidate status "
+                          "(default: 100000). Large subtelomeric satellite "
+                          "arrays produce the same TRF signature as a real "
+                          "centromere; without this check a large enough "
+                          "one can be mistaken for the primary candidate.")
+    cen.add_argument("--centromere_te_gff", default=None,
+                     help="Optional EarlGrey repeat-annotation GFF3 "
+                          "(standard 9-column GFF3 with ID=RND-.._FAMILY-.. "
+                          "and KIMURA80=.. in column 9). If given, TE "
+                          "instances are grouped by family and clustered "
+                          "per sequence: a family whose copies concentrate "
+                          "tightly in one narrow window (rather than being "
+                          "scattered genome-wide) is the classic signature "
+                          "of a retrotransposon-based centromere -- common "
+                          "in plant genomes whose centromeres are not built "
+                          "from simple tandem satellite DNA at all, which "
+                          "the TRF-only scan above cannot detect under any "
+                          "parameters. Reported alongside the TRF-based "
+                          "candidate as a cross-validating signal, not a "
+                          "replacement for it.")
+    cen.add_argument("--centromere_te_min_copies", type=int, default=15,
+                     help="Minimum TE copies of one family within a "
+                          "cluster to qualify (default: 15)")
+    cen.add_argument("--centromere_te_merge_gap_bp", type=int, default=300_000,
+                     help="Merge same-family TE instances within this "
+                          "distance (bp) of each other into one cluster "
+                          "(default: 300000 -- more generous than "
+                          "--centromere_merge_gap_bp, since retrotransposon "
+                          "insertions are more sparsely/irregularly spaced "
+                          "than a tandem satellite array, not one "
+                          "contiguous block)")
+    cen.add_argument("--centromere_te_max_kimura", type=float, default=0.0,
+                     help="Optional upper bound on a TE cluster's mean "
+                          "Kimura80 divergence (default: 0.0, i.e. off). "
+                          "Recently active/homogeneous (low-divergence) "
+                          "amplification of one family is a classic "
+                          "centromeric-retrotransposon signature; set e.g. "
+                          "0.15 to prioritize recently-active clusters and "
+                          "exclude ancient, highly diverged ones. Left off "
+                          "by default so a real but older cluster isn't "
+                          "silently excluded.")
 
     rrna = ap.add_argument_group("Module 3 — rRNA")
     rrna.add_argument("--kingdom", choices=["euka", "bacteria", "archaea"],
@@ -2804,8 +3063,8 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Comma-separated list of module numbers to skip "
                           "(e.g. --skip_module 0,1,2). "
                           "0=telomere  1=subtelomeric tandem repeats  2=masking  "
-                          "3=rRNA  4=tRNA  5=integration  6=visualization  "
-                          "7=evolution  8=centromere detection. "
+                          "3=rRNA  4=tRNA  5=integration  6=centromere detection  "
+                          "7=visualization  8=evolution. "
                           "Skipped modules are not rerun, but their outputs "
                           "from previous runs are picked up automatically.")
     gen.add_argument("--format", default="pdf",
@@ -2938,15 +3197,14 @@ def main() -> None:
             _log("    [4] tRNA annotation          →  results/mod04_tRNA_*.gff3")
         if 5 not in skip_modules:
             _log("    [5] Integration              →  results/mod05_annotation_*.gff3")
-        if 8 not in skip_modules:
-            _log("    [8] Centromere detection (runs here, before Module 6, "
-                 "since its plot consumes this output)  →  "
-                 "results/mod08_centromere_*.gff3 + mod08_centromere_summary_*.tsv")
         if 6 not in skip_modules:
-            fmt0 = args.format.split(",")[0].strip()
-            _log(f"    [6] Visualization ({args.sort_sequences})  →  results/mod06_plot_*.{fmt0}")
+            _log("    [6] Centromere detection      →  "
+                 "results/mod06_centromere_*.gff3 + mod06_centromere_summary_*.tsv")
         if 7 not in skip_modules:
-            _log("    [7] Evolutionary analysis       →  results/mod07_*.tsv + mod07_evolution_*")
+            fmt0 = args.format.split(",")[0].strip()
+            _log(f"    [7] Visualization ({args.sort_sequences})  →  results/mod07_plot_*.{fmt0}")
+        if 8 not in skip_modules:
+            _log("    [8] Evolutionary analysis       →  results/mod08_*.tsv + mod08_evolution_*")
         _log("  Exiting (--dry_run).")
         if _LOG_FH:
             _LOG_FH.close()
@@ -3064,15 +3322,13 @@ def main() -> None:
             tel_gff, rrna_gff, trna_gff, results, prefix,
             genome_size=genome_size)
 
-    # ── Module 8: Centromere detection ────────────────────────────────────────
-    # Numbered 8 (purely additive, no renumbering of existing modules 0-7),
-    # but executed here -- right after Module 5, before Module 6 -- since
-    # Module 6's plot consumes its GFF3 output, the same reason Module 5
-    # itself runs before Module 6.
-    cen_gff = results / f"mod08_centromere_{prefix}.gff3"
-    if not _skip(8, "centromere detection", cen_gff):
-        _banner("Module 8 — Centromere Detection")
-        cen_gff, _cen_tsv, _cen_counts = run_module8_centromere(
+    # ── Module 6: Centromere detection ────────────────────────────────────────
+    # Runs right after Module 5, before Module 7 -- Module 7's plot consumes
+    # its GFF3 output, the same reason Module 5 itself runs before Module 7.
+    cen_gff = results / f"mod06_centromere_{prefix}.gff3"
+    if not _skip(6, "centromere detection", cen_gff):
+        _banner("Module 6 — Centromere Detection")
+        cen_gff, _cen_tsv, _cen_counts = run_module6_centromere(
             fasta          = args.fasta,
             results        = results,
             workdir        = workdir,
@@ -3085,14 +3341,22 @@ def main() -> None:
             min_array_bp   = args.centromere_min_array_bp,
             min_seq_length = args.centromere_min_seq_length,
             threads        = args.threads,
+            tel_gff        = tel_gff,
+            subtel_gff     = subtel_gff,
+            end_buffer_bp  = args.centromere_end_buffer_bp,
+            te_gff         = (Path(args.centromere_te_gff)
+                              if args.centromere_te_gff else None),
+            te_min_copies  = args.centromere_te_min_copies,
+            te_merge_gap_bp = args.centromere_te_merge_gap_bp,
+            te_max_kimura  = args.centromere_te_max_kimura,
         )
 
-    # ── Module 6: Visualization ───────────────────────────────────────────────
+    # ── Module 7: Visualization ───────────────────────────────────────────────
     plot_formats = [f.strip().lstrip(".") for f in args.format.split(",")]
-    out_plot = results / f"mod06_plot_{prefix}.{plot_formats[0]}"
-    if not _skip(6, "visualization", out_plot):
-        _banner("Module 6 — Visualization")
-        run_module6_plot(
+    out_plot = results / f"mod07_plot_{prefix}.{plot_formats[0]}"
+    if not _skip(7, "visualization", out_plot):
+        _banner("Module 7 — Visualization")
+        run_module7_plot(
             fasta         = args.fasta,
             tel_gff       = tel_gff,
             rrna_gff      = rrna_gff,
@@ -3108,10 +3372,10 @@ def main() -> None:
             force         = args.force,
         )
 
-    # ── Module 7: Evolutionary analysis ───────────────────────────────────────
-    evo_out = results / f"mod07_rrna_scores_{prefix}.tsv"
-    if not _skip(7, "evolutionary analysis", evo_out):
-        run_module7_evolution(
+    # ── Module 8: Evolutionary analysis ───────────────────────────────────────
+    evo_out = results / f"mod08_rrna_scores_{prefix}.tsv"
+    if not _skip(8, "evolutionary analysis", evo_out):
+        run_module8_evolution(
             fasta        = args.fasta,
             rrna_gff     = rrna_gff,
             trna_gff     = trna_gff,

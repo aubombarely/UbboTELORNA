@@ -1,5 +1,76 @@
 # Changelog — UbboTELORNA
 
+## [v0.9.0] — 2026-08-19
+
+### Fixed
+- **Module 6 (centromere detection, formerly numbered 8) could report a
+  large subtelomeric satellite array as the primary centromere
+  candidate.** Confirmed on a real genome (*Phillyrea angustifolia*,
+  v0.8.0 run): a 609 kb array on one chromosome ran to the literal last
+  base of the sequence, and Module 1 had already independently flagged
+  that same terminus as a Tier-2 subtelomeric repeat -- Module 8 had no
+  way to know that and reported it as the primary candidate anyway.
+  Large subtelomeric arrays produce exactly the same TRF signature
+  (long, high-copy, tandem) as a real centromere.
+  Fixed with `_flag_island_context()`: every candidate array is now
+  checked against (a) proximity to either sequence end
+  (`--centromere_end_buffer_bp`, default 100000) and (b) overlap with
+  an already-confirmed telomere (Module 0) or subtelomeric repeat
+  (Module 1) region for the same sequence. Flagged candidates are
+  deprioritized for primary-candidate status (a clean, non-flagged
+  island is preferred even if smaller) but never silently discarded --
+  everything found is still reported, now with `is_suspect`/
+  `near_chromosome_end`/`overlaps_telomere`/`overlaps_subtelomeric`
+  attributes (GFF3) and columns (summary TSV) so the caveat is visible
+  rather than something the user has to manually cross-check.
+
+### Added
+- **Optional EarlGrey TE-family clustering as a second, independent
+  centromere signal.** Many plant genomes have retrotransposon-based
+  centromeres rather than simple tandem satellite DNA, which the
+  TRF-only scan cannot detect under any parameters. `--centromere_te_gff`
+  accepts an EarlGrey repeat-annotation GFF3 (standard 9-column GFF3,
+  `ID=RND-.._FAMILY-..` and `KIMURA80=..` in column 9); TE instances are
+  grouped by family and clustered per sequence
+  (`_merge_te_family_clusters()`, `--centromere_te_merge_gap_bp`,
+  default 300000 -- more generous than the satellite merge gap, since
+  retrotransposon insertions are more sparsely spaced than a tandem
+  array). A family whose copies concentrate tightly in one narrow
+  window (`--centromere_te_min_copies`, default 15) rather than being
+  scattered genome-wide is the classic retrotransposon-centromere
+  signature. Reported alongside the TRF-based candidate as a
+  cross-validating signal (new `te_*` summary TSV columns plus a
+  `te_cluster_candidate` GFF3 feature), including a `concentration_pct`
+  (this cluster's share of that family's genome-wide copy count) and a
+  `combined_evidence` flag (do the TRF and TE candidates for this
+  sequence actually overlap -- the strongest possible signal when they
+  do). `--centromere_te_max_kimura` optionally prioritizes recently-
+  active (low-divergence) clusters, off by default so an older but real
+  cluster isn't silently excluded.
+
+### Changed
+- **Module numbers now match execution order.** Previously, Module 8
+  (centromere detection) executed between Modules 5 and 6 (so its
+  output was ready in time for Module 6's plot), which meant module
+  *numbers* no longer matched execution order for the first time in
+  this tool. Renumbered so execution order and numbering agree exactly:
+  `0`=telomere, `1`=subtelomeric, `2`=masking, `3`=rRNA, `4`=tRNA,
+  `5`=integration, `6`=centromere detection (was 8),
+  `7`=visualization (was 6), `8`=evolutionary analysis (was 7). No code
+  actually moved -- centromere detection already ran right after
+  integration and before visualization; only the labels and output
+  filenames changed. **This renames output files**:
+  `mod06_plot_*` → `mod07_plot_*`; `mod07_rrna_scores_*`/
+  `mod07_trna_class_*`/`mod07_arrays_*`/`mod07_evolution_*` →
+  `mod08_*`; `mod08_centromere_*` → `mod06_centromere_*`. Functions
+  renamed to match: `run_module6_plot`→`run_module7_plot`,
+  `run_module7_evolution`→`run_module8_evolution`,
+  `run_module8_centromere`→`run_module6_centromere`. Also caught and
+  fixed a `--skip_module` example in the README that would have run the
+  wrong module after the renumbering (skipping 0-6 no longer isolates
+  just the evolutionary-analysis module on its own, since visualization
+  is now module 7, not 6).
+
 ## [v0.8.0] — 2026-08-18
 
 ### Added
