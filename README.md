@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/version-v0.9.1-teal"/>
+<img src="https://img.shields.io/badge/version-v0.9.2-teal"/>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue"/>
 <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey"/>
-<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.9.1-orange"/></a>
+<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.9.2-orange"/></a>
 </p>
 
 ---
@@ -168,6 +168,7 @@ UbboTELORNA.py --fasta FASTA --output DIR [options]
 | `--centromere_te_min_copies` | 15 | Minimum TE copies of one family within a cluster to qualify |
 | `--centromere_te_merge_gap_bp` | 300000 | Merge same-family TE instances within this distance (bp) into one cluster — more generous than `--centromere_merge_gap_bp`, since retrotransposon insertions are more sparsely/irregularly spaced than a tandem satellite array |
 | `--centromere_te_max_kimura` | 0.0 (off) | Optional upper bound on a TE cluster's mean Kimura80 divergence, to prioritize recently-active (low-divergence) clusters — a classic centromeric-retrotransposon signature. Left off by default so an older but real cluster isn't silently excluded |
+| `--centromere_te_min_concentration_pct` | 0.0 (off) | Optional minimum concentration: this cluster's copies as a % of that TE family's total genome-wide copy count. Clusters are always *ranked* by concentration first (not raw copy count) — a very common, uniformly-distributed family can clear `--centromere_te_min_copies` in some window on almost every chromosome purely from abundance, with only a tiny fraction of its copies actually there; set this to additionally exclude such low-concentration clusters outright, e.g. `30` to require ≥30% of a family's genome-wide copies in one cluster |
 
 ### Module 3 — rRNA annotation
 

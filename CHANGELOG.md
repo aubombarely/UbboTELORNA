@@ -1,5 +1,33 @@
 # Changelog — UbboTELORNA
 
+## [v0.9.2] — 2026-08-19
+
+### Fixed
+- **TE-family cluster selection ranked by raw copy count, letting a
+  ubiquitous, uniformly-distributed family dominate the "best cluster"
+  slot on nearly every chromosome.** Confirmed on a real genome
+  (*Phillyrea angustifolia*, v0.9.0 run): a single family
+  (`RND-3_FAMILY-2147`, ~8,800 copies genome-wide) "won" as the top TE
+  cluster on 18 of 23 chromosomes, but at only 0.7-2.3% concentration
+  each -- i.e. only a tiny fraction of that family's copies were
+  actually in any one cluster, the opposite of the localized-
+  amplification signature a real centromeric retrotransposon shows.
+  This happened because a family common enough clears
+  `--centromere_te_min_copies` in *some* window on almost every
+  chromosome from sheer genome-wide abundance alone, and ranking by
+  raw `n_copies` let that noise consistently beat genuinely
+  concentrated (but lower absolute copy number) families.
+  Fixed by computing `concentration_pct` for every qualifying cluster
+  up front and ranking by concentration first, copy count as tiebreak,
+  instead of the reverse. Also adds an optional
+  `--centromere_te_min_concentration_pct` (default 0.0, off) to
+  exclude low-concentration clusters outright rather than just
+  deprioritizing them. Verified with a controlled synthetic case (a
+  1,000-copy genome-wide family with only 20 copies, 2%, in one
+  cluster vs. a 30-copy family entirely, 100%, in one cluster): the
+  truly localized family now correctly wins, both by default ranking
+  and with the new minimum-concentration filter.
+
 ## [v0.9.1] — 2026-08-19
 
 ### Fixed

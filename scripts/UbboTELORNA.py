@@ -61,7 +61,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.9.1"
+VERSION = "v0.9.2"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -2563,7 +2563,8 @@ def run_module6_centromere(fasta: Path, results: Path, workdir: Path,
                            te_gff: Path | None = None,
                            te_min_copies: int = 15,
                            te_merge_gap_bp: int = 300_000,
-                           te_max_kimura: float = 0.0) -> tuple[Path, Path, dict]:
+                           te_max_kimura: float = 0.0,
+                           te_min_concentration_pct: float = 0.0) -> tuple[Path, Path, dict]:
     """Genome-wide TRF scan for candidate centromeric satellite arrays, one
     per sequence, cross-validated against two independent signals: (1)
     Module 0/1's telomere/subtelomeric calls, so a large subtelomeric
@@ -2647,11 +2648,23 @@ def run_module6_centromere(fasta: Path, results: Path, workdir: Path,
             if te_max_kimura > 0:
                 clusters = [c for c in clusters
                            if c["mean_kimura80"] is not None and c["mean_kimura80"] <= te_max_kimura]
-            clusters.sort(key=lambda c: -c["n_copies"])
+            # Rank by concentration (this cluster's share of that family's
+            # genome-wide copy count), not raw copy count. A very common,
+            # uniformly-distributed family can clear --centromere_te_min_copies
+            # in some window on almost every chromosome purely from sheer
+            # abundance, with only a tiny fraction of its copies actually
+            # there (real case: a ~8,800-copy genome-wide family "won" on
+            # 18/23 chromosomes at just 0.7-2.3% concentration each --
+            # exactly backwards for a signal meant to indicate localized
+            # amplification, the retrotransposon-centromere hallmark).
+            for c in clusters:
+                total = te_family_totals.get(c["family_id"], c["n_copies"])
+                c["concentration_pct"] = 100 * c["n_copies"] / total if total else 0.0
+            if te_min_concentration_pct > 0:
+                clusters = [c for c in clusters if c["concentration_pct"] >= te_min_concentration_pct]
+            clusters.sort(key=lambda c: (-c["concentration_pct"], -c["n_copies"]))
             if clusters:
                 best = dict(clusters[0])
-                total = te_family_totals.get(best["family_id"], best["n_copies"])
-                best["concentration_pct"] = 100 * best["n_copies"] / total if total else 0.0
                 te_by_seq[seqn] = best
 
     records: list = []
@@ -3027,6 +3040,23 @@ def _build_parser() -> argparse.ArgumentParser:
                           "exclude ancient, highly diverged ones. Left off "
                           "by default so a real but older cluster isn't "
                           "silently excluded.")
+    cen.add_argument("--centromere_te_min_concentration_pct", type=float, default=0.0,
+                     help="Optional minimum concentration (default: 0.0, "
+                          "i.e. off): this cluster's copies as a percentage "
+                          "of that TE family's total genome-wide copy "
+                          "count. Candidate clusters are always ranked by "
+                          "concentration first (not raw copy count) since a "
+                          "very common, uniformly-distributed family can "
+                          "clear --centromere_te_min_copies in some window "
+                          "on almost every chromosome from sheer abundance "
+                          "alone, with only a tiny fraction of its copies "
+                          "actually concentrated there -- the opposite of "
+                          "the localized-amplification signature a real "
+                          "centromeric retrotransposon shows. This flag "
+                          "additionally excludes low-concentration clusters "
+                          "outright rather than just deprioritizing them; "
+                          "e.g. set 30 to require at least 30% of a "
+                          "family's genome-wide copies in one cluster.")
 
     rrna = ap.add_argument_group("Module 3 — rRNA")
     rrna.add_argument("--kingdom", choices=["euka", "bacteria", "archaea"],
@@ -3358,6 +3388,7 @@ def main() -> None:
             te_min_copies  = args.centromere_te_min_copies,
             te_merge_gap_bp = args.centromere_te_merge_gap_bp,
             te_max_kimura  = args.centromere_te_max_kimura,
+            te_min_concentration_pct = args.centromere_te_min_concentration_pct,
         )
 
     # ── Module 7: Visualization ───────────────────────────────────────────────
