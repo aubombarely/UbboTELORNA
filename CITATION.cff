@@ -2,22 +2,24 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "UbboTELORNA"
 abstract: >
-  UbboTELORNA annotates three classes of ancient, conserved genomic elements —
-  telomeres, rRNA genes, and tRNA genes — in genome assemblies, with built-in
-  low-complexity masking to prevent failures on telomeric and repetitive sequences.
-  Named after Ubbo-Sathla, the primordial source of all terrestrial life in the
-  Lovecraft–Smith Mythos.
+  UbboTELORNA annotates ancient, conserved genomic elements — telomeres,
+  subtelomeric tandem repeats, rRNA genes, tRNA genes, and centromere
+  candidates — in genome assemblies, with built-in low-complexity masking
+  and optional evolutionary/score-distribution analysis of the resulting
+  annotations. Named after Ubbo-Sathla, the primordial source of all
+  terrestrial life in the Lovecraft–Smith Mythos.
 authors:
   - family-names: Bombarely
     given-names: Aureliano
     email: aubombarely@gmail.com
     orcid: "https://orcid.org/0000-0001-6257-8914"
-version: "v0.3.0"
-date-released: "2026-07-22"
+version: "v0.10.0"
+date-released: "2026-08-19"
 license: MIT
 repository-code: "https://github.com/aubombarely/UbboTELORNA"
 keywords:
   - telomere
+  - centromere
   - rRNA
   - tRNA
   - genome annotation

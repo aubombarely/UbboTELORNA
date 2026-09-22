@@ -3104,7 +3104,7 @@ def _build_parser() -> argparse.ArgumentParser:
                           "centromeric retrotransposon shows. This flag "
                           "additionally excludes low-concentration clusters "
                           "outright rather than just deprioritizing them; "
-                          "e.g. set 30 to require at least 30% of a "
+                          "e.g. set 30 to require at least 30%% of a "
                           "family's genome-wide copies in one cluster.")
 
     rrna = ap.add_argument_group("Module 3 — rRNA")

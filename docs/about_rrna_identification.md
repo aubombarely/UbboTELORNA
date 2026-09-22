@@ -61,18 +61,56 @@ sequence complexity and hardware):
 
 This is the most important practical difference for large plant genomes.
 
-nhmmer's memory footprint is **essentially constant per thread** regardless
-of sequence or chromosome length — the HMM DP matrix is small and fixed.
+nhmmer's memory footprint scales with **thread count, not sequence or
+chromosome length** — but earlier estimates in this doc understated how
+much: it is not a small fixed cost per thread, it is a substantial one.
+Real profiling (see below) shows each thread adds roughly **270 Mb**, so
+high-thread-count runs on HPC nodes (e.g. 48 threads) can reach into the
+tens of Gb even though the genome itself barely matters.
 
 cmsearch allocates a **CM DP matrix proportional to sequence length**,
-one per thread.  On a genome with large chromosomes (100–800 Mb each)
-and 48 threads, this can exceed 128 Gb even with `--rfam --mxsize 512`.
+one per thread, on top of its own per-thread base cost. On a genome with
+large chromosomes (100–800 Mb each) and 48 threads, this can exceed
+128 Gb even with `--rfam --mxsize 512`.
 
 | Scenario | nhmmer | cmsearch |
 |---|---|---|
-| 4 threads, 500 Mb genome | ~200 Mb | ~4–8 Gb |
-| 48 threads, 1 Gb genome | ~500 Mb | ~30–60 Gb |
-| 48 threads, 3 Gb genome | ~500 Mb | OOM likely |
+| 4 threads, any genome size | ~1.1 Gb (measured) | ~4–8 Gb (estimate) |
+| 8 threads, any genome size | ~2.2 Gb (measured) | — |
+| 16 threads, any genome size | ~4.3 Gb (measured) | — |
+| 24 threads, any genome size | ~6.6 Gb (measured) | — |
+| 48 threads, 1 Gb genome | ~13 Gb (extrapolated) | ~30–60 Gb (estimate) |
+| 48 threads, 3 Gb genome | ~13 Gb (extrapolated) | OOM likely |
+
+### nhmmer real-world memory profiling (2026-09-22)
+
+Measured with `/usr/bin/time -v nhmmer` on Salvia (real HPC node), single
+combined Rfam euka HMM (`ubbotelorna_euka.hmm`), against the hard-masked
+*Zea mays* genome (`zeaMays.hardmasked.fasta`, ~2.1 Gb):
+
+| `--cpu` | Peak RSS | Wall clock |
+|---|---|---|
+| 4  | 1.13 Gb | 6:48 |
+| 8  | 2.17 Gb | 3:30 |
+| 16 | 4.29 Gb | 2:05 |
+| 24 | 6.58 Gb | 1:27 |
+
+Fit (least-squares across all four points, each prediction within ~0.3%
+of measured): **peak RSS ≈ 41 Mb + ~272 Mb × `--cpu`**. Total CPU-seconds
+is roughly constant across thread counts (~1700–1830s), so the tradeoff
+is a clean one: lower `--cpu` buys lower, more predictable memory at the
+cost of wall-clock time, not a change in total compute.
+
+**Practical implication:** when annotating many large genomes in
+parallel (e.g. batch mode across 100+ genomes), the nhmmer step's memory
+budget should be planned from `--cpu` (via the formula above), not from
+genome size — a smaller genome at 24 threads uses the same memory as a
+larger one at 24 threads. Capping the nhmmer invocation's own thread
+count independently of the pipeline's overall `--threads` is the
+most direct lever for keeping memory bounded and predictable; a
+windowed/chunked execution mode is also being considered as a
+complementary fix. Not yet implemented as of this writing — track
+progress in the CHANGELOG.
 
 ---
 

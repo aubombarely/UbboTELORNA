@@ -1,14 +1,19 @@
 # UbboTELORNA — Project Notes
 
-Annotates three classes of ancient, conserved genomic elements in genome
-assemblies: telomeres (Module 0), rRNA genes (Module 2), and tRNA genes
-(Module 3). Includes low-complexity masking (Module 1) to prevent annotation
-tool failures on telomeric and repetitive sequences.
+Annotates ancient, conserved genomic elements in genome assemblies:
+telomeres (Module 0), subtelomeric tandem repeats (Module 1), rRNA genes
+(Module 3), tRNA genes (Module 4), and centromere candidates (Module 6).
+Low-complexity masking (Module 2) prevents annotation tool failures on
+telomeric and repetitive sequences. Module 5 integrates all GFF3 outputs;
+Module 7 produces summary plots; Module 8 runs optional evolutionary/
+score-distribution analysis on the resulting annotations.
 
 Named after Ubbo-Sathla (Clark Ashton Smith / Lovecraft Mythos) — the
 primordial source of all terrestrial life.
 
-**Current version:** v0.1.0 — `scripts/UbboTELORNA.py`
+**Current version:** v0.10.0 — `scripts/UbboTELORNA.py` (see
+`CITATION.cff`/`CHANGELOG.md` for the authoritative version; this file
+had drifted stale before 2026-09-22).
 
 This project fully follows the shared coding blueprint at `../CLAUDE.md`.
 Apply those standards to any changes or additions here.
