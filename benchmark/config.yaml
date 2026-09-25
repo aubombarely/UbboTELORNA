@@ -18,6 +18,15 @@ ubbotelorna_conda_env: "ubbotelorna"
 # Default thread count used for the correctness and robustness benchmarks.
 default_threads: 8
 
+# Module 3 (rRNA) --chunk_workers passed to UbboTELORNA.py for the
+# correctness benchmark. Default 4 matches the tool's own default and is
+# what task #9's regression was found under. Set to 1 to disable cross-chunk
+# concurrency for the isolation test (see project_ubbotelorna.md task #9) --
+# a --chunk_workers 1 rerun that still reproduces the high-FN regression
+# rules out concurrency as the cause; a rerun that matches the July v0.1.0
+# baseline confirms it.
+chunk_workers: 4
+
 # Thread counts swept during the performance benchmark (on rice / human only).
 performance_threads: [1, 4, 8, 16, 32]
 

@@ -112,9 +112,10 @@ rule run_ubbotelorna_nhmmer:
     output:
         gff3 = "{res}/annotations/{genome}/ubbotelorna_nhmmer/{genome}.gff3",
     params:
-        kingdom = lambda wc: config["genomes"][wc.genome]["kingdom"],
-        outdir  = "{res}/annotations/{genome}/ubbotelorna_nhmmer/run",
-        script  = config["ubbotelorna_script"],
+        kingdom       = lambda wc: config["genomes"][wc.genome]["kingdom"],
+        outdir        = "{res}/annotations/{genome}/ubbotelorna_nhmmer/run",
+        script        = config["ubbotelorna_script"],
+        chunk_workers = config["chunk_workers"],
     threads: config["default_threads"]
     log:
         "{res}/annotations/{genome}/ubbotelorna_nhmmer/{genome}.log"
@@ -128,6 +129,7 @@ rule run_ubbotelorna_nhmmer:
             --kingdom {params.kingdom} \
             --search_tool nhmmer \
             --threads {threads} \
+            --chunk_workers {params.chunk_workers} \
             --disable_co2_tracking \
             --skip_module 1,6,7 \
             > {log} 2>&1
@@ -141,9 +143,10 @@ rule run_ubbotelorna_cmsearch:
     output:
         gff3 = "{res}/annotations/{genome}/ubbotelorna_cmsearch/{genome}.gff3",
     params:
-        kingdom = lambda wc: config["genomes"][wc.genome]["kingdom"],
-        outdir  = "{res}/annotations/{genome}/ubbotelorna_cmsearch/run",
-        script  = config["ubbotelorna_script"],
+        kingdom       = lambda wc: config["genomes"][wc.genome]["kingdom"],
+        outdir        = "{res}/annotations/{genome}/ubbotelorna_cmsearch/run",
+        script        = config["ubbotelorna_script"],
+        chunk_workers = config["chunk_workers"],
     threads: config["default_threads"]
     log:
         "{res}/annotations/{genome}/ubbotelorna_cmsearch/{genome}.log"
@@ -157,6 +160,7 @@ rule run_ubbotelorna_cmsearch:
             --kingdom {params.kingdom} \
             --search_tool cmsearch \
             --threads {threads} \
+            --chunk_workers {params.chunk_workers} \
             --disable_co2_tracking \
             --skip_module 1,6,7 \
             > {log} 2>&1

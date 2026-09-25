@@ -35,19 +35,20 @@ def _parse_attrs(s: str) -> dict:
 
 
 def _load_gff3(path: Path, feature_type: str) -> dict:
-    """Return {seqname: [(start, end, strand, subtype), ...]} sorted by start.
+    """Return {seqname: [(start, end, strand, subtype, array_id), ...]} sorted by start.
 
-    For rRNA, predicted 5S tandem-array members (flagged by UbboTELORNA's
-    --flag_5s_arrays post-filter with array_member=true;array_id=arrXXXX)
-    are collapsed into a single representative feature per array before
-    matching. Without this, a correctly-detected array of N real 5S copies
-    is counted as N independent predictions — since a sparse reference
-    typically annotates only one representative copy per array, every
-    member beyond the first becomes its own false positive, punishing
-    correct array detection as if it were N-1 separate errors.
+    array_id is the predicted feature's UbboTELORNA --flag_5s_arrays tag
+    (array_member=true;array_id=arrXXXX) when present, else None. Array
+    members are NOT collapsed here — each is kept as its own feature so it
+    can be matched individually against the reference (a real array with
+    N genuine copies should earn up to N real TPs when the reference
+    actually annotates that many). The over-counting problem this
+    replaced (a correctly-detected array being penalized as N-1 separate
+    false positives against a sparse reference) is instead handled in
+    _match_features, which caps *unmatched* array members at one FP per
+    array rather than one per member. See _match_features docstring.
     """
     records = defaultdict(list)
-    array_groups: dict[tuple, list] = defaultdict(list)  # (seqname, array_id) -> members
     feature_type_lc = feature_type.lower()
     with open(path) as fh:
         for line in fh:
@@ -81,19 +82,7 @@ def _load_gff3(path: Path, feature_type: str) -> dict:
                 subtype = feature_type_lc
 
             array_id = attrs.get("array_id") if feature_type_lc == "rrna" else None
-            if array_id:
-                array_groups[(seqname, array_id)].append((start, end, strand, subtype))
-            else:
-                records[seqname].append((start, end, strand, subtype))
-
-    # Collapse each detected array into one representative feature spanning
-    # its full extent, so it counts as a single prediction during matching.
-    for (seqname, _array_id), members in array_groups.items():
-        starts  = [m[0] for m in members]
-        ends    = [m[1] for m in members]
-        strand  = members[0][2]
-        subtype = members[0][3]
-        records[seqname].append((min(starts), max(ends), strand, subtype))
+            records[seqname].append((start, end, strand, subtype, array_id))
 
     for seqname in records:
         records[seqname].sort(key=lambda x: x[0])
@@ -113,7 +102,23 @@ def _reciprocal_overlap(a_start, a_end, b_start, b_end, threshold: float) -> boo
 
 def _match_features(predicted: dict, reference: dict,
                     threshold: float) -> tuple[int, int, int, dict, dict, dict]:
-    """Return (TP, FP, FN, tp_by_sub, fp_by_sub, fn_by_sub)."""
+    """Return (TP, FP, FN, tp_by_sub, fp_by_sub, fn_by_sub).
+
+    Each reference feature can be claimed by at most one predicted feature
+    (ref_matched gates re-use), so TP never exceeds the true reference
+    count even when many predicted array members overlap the same region.
+
+    Array members (predicted features sharing an array_id — see
+    _load_gff3) are matched individually, so a real array with N genuine
+    copies earns up to N real TPs when the reference annotates that many.
+    Only *unmatched* members are treated specially: instead of counting
+    each one as its own FP (which would punish a correctly-detected array
+    as N-1 separate errors whenever the reference is sparser than the
+    real biology), all of an array's unmatched members together count as
+    at most one FP — "this array has more copies than the reference
+    lists" is one finding, not N-1 of them. Non-array predictions are
+    unaffected: each unmatched one is still its own FP as before.
+    """
     tp_by_sub: dict[str, int] = defaultdict(int)
     fp_by_sub: dict[str, int] = defaultdict(int)
     fn_by_sub: dict[str, int] = defaultdict(int)
@@ -127,23 +132,31 @@ def _match_features(predicted: dict, reference: dict,
         ref_starts   = [r[0] for r in ref_list]
         ref_matched  = [False] * len(ref_list)
 
-        for (p_start, p_end, p_strand, p_sub) in pred_list:
+        unmatched_array_sub: dict[str, str] = {}  # array_id -> subtype, for any array with >=1 unmatched member
+
+        for (p_start, p_end, p_strand, p_sub, p_array_id) in pred_list:
             # binary search: find first ref feature that could overlap
             lo = bisect.bisect_left(ref_starts, p_start - (p_end - p_start + 1))
             matched = False
             for i in range(lo, len(ref_list)):
-                r_start, r_end, r_strand, r_sub = ref_list[i]
+                r_start, r_end, r_strand, r_sub, _r_array_id = ref_list[i]
                 if r_start > p_end:
                     break
-                if _reciprocal_overlap(p_start, p_end, r_start, r_end, threshold):
+                if not ref_matched[i] and _reciprocal_overlap(p_start, p_end, r_start, r_end, threshold):
                     matched = True
                     ref_matched[i] = True
                     tp_by_sub[p_sub] += 1
                     break
             if not matched:
-                fp_by_sub[p_sub] += 1
+                if p_array_id:
+                    unmatched_array_sub.setdefault(p_array_id, p_sub)
+                else:
+                    fp_by_sub[p_sub] += 1
 
-        for matched, (r_start, r_end, r_strand, r_sub) in zip(ref_matched, ref_list):
+        for sub in unmatched_array_sub.values():
+            fp_by_sub[sub] += 1
+
+        for matched, (r_start, r_end, r_strand, r_sub, _r_array_id) in zip(ref_matched, ref_list):
             if not matched:
                 fn_by_sub[r_sub] += 1
 
