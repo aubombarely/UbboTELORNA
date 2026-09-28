@@ -1,5 +1,27 @@
 # Changelog — UbboTELORNA
 
+## [v0.11.0] — 2026-09-28
+
+### Added
+- Module 0 telomere auto-detection now warns when the winning repeat
+  unit doesn't match any known canonical telomere repeat for the run's
+  `--kingdom` (`_CANONICAL_TELOMERE_REPEATS`, currently defined for
+  `euka` only — bacteria/archaea telomeres are too variable, or absent
+  on circular chromosomes, for a reliable canonical list). Confirmed on
+  the K326 tobacco genome (915 sequences, only 24 real chromosomes):
+  auto-detection had picked a spurious repeat (`CATGGCAGGA`) supported
+  almost entirely by unplaced contigs rather than real chromosome ends —
+  a genome with far more fragments than real chromosomes can let a
+  common non-telomeric repeat outvote the true, much rarer telomere
+  signal. The warning doesn't change the detected value (still usable
+  for divergent/non-model species with a genuinely unlisted repeat) —
+  it flags the result so the user checks `mod00_summary_*.tsv`'s
+  chromosome-vs-contig density breakdown before trusting it, and
+  suggests `--telomere_repeat` as an explicit override. Reuses the
+  existing `_motif_matches_telomere` rotation/reverse-complement-aware
+  comparison, so e.g. `TTAGGG` correctly matches its rotations and
+  reverse complement without a separate check.
+
 ## [v0.10.0] — 2026-08-19
 
 ### Added

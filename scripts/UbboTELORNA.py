@@ -61,7 +61,7 @@ matplotlib.rcParams.update({
     "figure.facecolor": "white",
 })
 
-VERSION = "v0.10.0"
+VERSION = "v0.11.0"
 
 # ── Rfam covariance model registry ────────────────────────────────────────────
 
@@ -457,6 +457,19 @@ def _kmer_density(seq: str, repeat_unit: str) -> float:
 # an exact-match k-mer scan.
 
 
+# Known canonical telomere repeat units, by --kingdom. Used only to WARN
+# when auto-detection picks something outside this list -- never to
+# override the detected value, since divergent/non-model species can
+# legitimately have an unlisted repeat. No entry for bacteria/archaea:
+# most are circular (no telomeres at all), and the rare linear cases
+# (e.g. Streptomyces/S. avermitilis) use protein-capped ends, not a
+# simple repeat array, so there is no reliable canonical list to check
+# against for those kingdoms.
+_CANONICAL_TELOMERE_REPEATS: dict[str, list[str]] = {
+    "euka": ["TTAGGG", "TTTAGGG", "TTAGGC", "TTAGG", "TCAGG"],
+}
+
+
 def _select_telomere_candidate_trf(trf_hits_by_header: dict, offsets: dict,
                                    min_period: int = 4, max_period: int = 12,
                                    min_seq_support: int = 2) -> str | None:
@@ -496,7 +509,8 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
                           tel_min_len: int, tel_detect_window: int,
                           results: Path, workdir: Path,
                           prefix: str, force: bool,
-                          min_seq_length_telo: int = 0) -> tuple[Path, Path, str | None]:
+                          min_seq_length_telo: int = 0,
+                          kingdom: str = "euka") -> tuple[Path, Path, str | None]:
     """Scan contig ends for telomeric repeats; return (gff3_path,
     summary_tsv_path, repeat_unit_used)."""
     out_gff3 = results / f"mod00_telomeres_{prefix}.gff3"
@@ -542,6 +556,20 @@ def run_module0_telomeres(fasta: Path, repeat_unit: str | None,
             out_tsv.write_text("seqname\tend\tfound\tstart\tend_pos\tlength_bp\tdensity\trepeat_unit\n")
             return out_gff3, out_tsv, None
         _log(f"  Detected repeat unit: {repeat_unit}")
+        canonical_list = _CANONICAL_TELOMERE_REPEATS.get(kingdom)
+        if canonical_list and not any(
+            _motif_matches_telomere(known, repeat_unit) == "yes"
+            for known in canonical_list
+        ):
+            _log(f"  WARNING: auto-detected repeat unit '{repeat_unit}' does "
+                 f"not match any known canonical telomere repeat for "
+                 f"--kingdom {kingdom} ({', '.join(canonical_list)}). This can "
+                 f"happen on assemblies with many more unplaced/fragmented "
+                 f"contigs than real chromosomes, where a common non-telomeric "
+                 f"repeat outvotes the real signal (see CHANGELOG). Check "
+                 f"results/mod00_summary_*.tsv for a chromosome-vs-contig "
+                 f"density breakdown before trusting this result, or supply "
+                 f"--telomere_repeat explicitly if you know the true repeat.")
     else:
         repeat_unit = repeat_unit.upper()
         _log(f"  Using user-supplied repeat unit: {repeat_unit}")
@@ -3329,6 +3357,7 @@ def main() -> None:
             prefix           = prefix,
             force            = args.force,
             min_seq_length_telo = args.telomere_min_seq_length,
+            kingdom          = args.kingdom,
         )
 
     # ── Module 1: Subtelomeric tandem repeats ─────────────────────────────────
